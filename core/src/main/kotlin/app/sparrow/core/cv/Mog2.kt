@@ -40,8 +40,8 @@ class Mog2(
      */
     fun apply(gray: ByteArray, mask: ByteArray) {
         frames++
-        // Fast initial learning, then the configured history.
-        val alpha = 1f / minOf(frames, history)
+        // Fast initial learning, then the configured history (OpenCV: 1 / min(2n, history)).
+        val alpha = 1f / minOf(2 * frames, history)
         val prune = -alpha * complexityReduction
         val oneMinus = 1f - alpha
         for (p in 0 until n) {
@@ -88,20 +88,29 @@ class Mog2(
                 total += w
                 k++
             }
-            if (!fits) {
-                // Replace the weakest mode when full, else add one.
-                val replacing = count == maxModes
-                val slot = if (replacing) maxModes - 1 else count++
-                val i = base + slot
-                if (replacing) total -= weight[i]
-                weight[i] = if (count == 1) 1f else alpha
-                mean[i] = x
-                variance[i] = varInit
-                total += weight[i]
-            }
+            // Renormalise first, then insert a new mode the way OpenCV does.
             if (total > 0f) {
                 val inv = 1f / total
                 for (m in 0 until count) weight[base + m] *= inv
+            }
+            if (!fits) {
+                // Replace the weakest mode when full, else add one.
+                val slot = if (count == maxModes) maxModes - 1 else count++
+                val i = base + slot
+                if (count == 1) {
+                    weight[i] = 1f
+                } else {
+                    weight[i] = alpha
+                    for (m in 0 until count) if (m != slot) weight[base + m] *= oneMinus
+                }
+                mean[i] = x
+                variance[i] = varInit
+                // Move the new mode up to its place in weight order.
+                var j = slot
+                while (j > 0 && alpha >= weight[base + j - 1]) {
+                    swap(base + j, base + j - 1)
+                    j--
+                }
             }
             modes[p] = count
             mask[p] = if (background) 0 else 0xFF.toByte()

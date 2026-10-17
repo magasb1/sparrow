@@ -66,6 +66,16 @@ class SrtTest {
     }
 
     @Test
+    fun `bitrate controller backs off from the applied rate and does not probe an unused link`() {
+        val c = BitrateController(minKbps = 300, maxKbps = 4000, initialKbps = 4000, latencyMs = 500)
+        val clean = LinkSample(1000, 0, 0, 0, 40.0, 20)
+        // Encoder held at 2000 by a static scene: a clean link must not raise the ceiling.
+        repeat(20) { assertNull(c.onSample(clean, appliedKbps = 2000)) }
+        // Congestion backs off from what is really sent, not from the 4000 ceiling.
+        assertEquals(1500, c.onSample(clean.copy(packetsDropped = 5), appliedKbps = 2000))
+    }
+
+    @Test
     fun `profile export strips passphrase and import assigns new ids`() {
         val p = Profile(name = "Field", destination = Destination(host = "h", passphrase = "0123456789abc"))
         val json = ProfileCodec.export(listOf(p))

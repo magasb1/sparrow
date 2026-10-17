@@ -5,11 +5,11 @@ import kotlin.math.roundToInt
 
 /**
  * Content-adaptive bitrate: a static scene needs far fewer bits than a busy one, so the target
- * falls towards [staticFraction] of the configured bitrate when nothing moves and returns to
- * full as soon as motion or camera movement appears. It never exceeds the link ABR's ceiling.
+ * falls towards [staticFraction] of the link ceiling when nothing moves and returns to full as
+ * soon as motion or camera movement appears. Increases are paced by [next], so a scene that
+ * starts moving after a long static spell does not burst onto a link that has not carried it.
  */
 class ContentBitrate(
-    private val baseKbps: Int,
     private val minKbps: Int,
     private val staticFraction: Double = 0.5,
     /** Moving fraction of the frame at which the full bitrate is used. */
@@ -29,9 +29,23 @@ class ContentBitrate(
         fraction = staticFraction + (1 - staticFraction) * smoothed
     }
 
-    /** Effective encoder target given the link ABR's current ceiling. */
-    fun targetKbps(linkCeilingKbps: Int): Int =
-        minOf(linkCeilingKbps, (baseKbps * fraction).roundToInt()).coerceAtLeast(minKbps)
+    /** Desired encoder target given the link ABR's current ceiling. */
+    fun targetKbps(linkCeilingKbps: Int): Int = (linkCeilingKbps * fraction).roundToInt().coerceAtLeast(minKbps)
+
+    /** Full rate again, e.g. when motion samples stop arriving. */
+    fun reset() {
+        smoothed = 1.0
+        fraction = 1.0
+    }
+
+    companion object {
+        /**
+         * One step from [currentKbps] towards [desiredKbps]: down at once, up by at most 25% (plus
+         * 50 kbit/s) per call, made about once a second.
+         */
+        fun next(currentKbps: Int, desiredKbps: Int): Int =
+            if (desiredKbps <= currentKbps) desiredKbps else minOf(desiredKbps, (currentKbps * 1.25).roundToInt() + 50)
+    }
 }
 
 /** A region and its QP offset in encoder pixels; negative offsets mean higher quality. */

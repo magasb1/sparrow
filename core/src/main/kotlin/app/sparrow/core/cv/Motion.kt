@@ -86,16 +86,16 @@ class MotionAnalyzer(
 }
 
 /**
- * Decides when the detector runs, so RF-DETR works only when the scene changes:
- * - at the configured rate while there is motion (and for [holdUs] after it), or the camera moves;
- * - at once, within [minIntervalUs], when a moving blob is not explained by a known track;
+ * Decides when the detector runs, so RF-DETR works only when the scene changes, and never more
+ * often than its configured rate:
+ * - at that rate while there is motion (and for [holdUs] after it), the camera moves, or a moving
+ *   blob is not explained by a known track (even below the activity threshold);
  * - otherwise every [keepAliveUs], so still targets are not lost.
  */
 class DetectionScheduler(
     private val activeIntervalUs: Long,
     private val keepAliveUs: Long = 2_000_000,
     private val holdUs: Long = 2_000_000,
-    private val minIntervalUs: Long = 100_000,
     /** Below this moving fraction a frame counts as static. */
     private val activityThreshold: Float = 0.002f,
 ) {
@@ -109,12 +109,7 @@ class DetectionScheduler(
         if (moving) lastMotionUs = nowUs
         val active = moving || (lastMotionUs != Long.MIN_VALUE && nowUs - lastMotionUs < holdUs)
         val unexplained = motion.blobs.any { b -> tracks.none { it.box.iou(b) > 0.1f || contains(it.box, b) } }
-        val run = when {
-            since < minIntervalUs -> false
-            unexplained -> true
-            active -> since >= activeIntervalUs
-            else -> since >= keepAliveUs
-        }
+        val run = if (active || unexplained) since >= activeIntervalUs else since >= keepAliveUs
         if (run) lastRunUs = nowUs
         return run
     }

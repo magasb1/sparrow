@@ -96,7 +96,7 @@ class StreamPipeline(
 
     private var recordingFile: File? = null
     @Volatile private var recorder: OutputStream? = null
-    private var stopped = false
+    @Volatile private var stopped = false
 
     private val sender = SrtSender(profile.destination, object : SrtSender.Listener {
         override fun onState(state: LinkState) = StreamController.update {
@@ -111,7 +111,7 @@ class StreamPipeline(
 
         override fun onStats(sample: LinkSample, sendKbps: Double) {
             val loss = if (sample.packetsSent > 0) 100.0 * sample.packetsLost / sample.packetsSent else 0.0
-            abr?.onSample(sample)?.let { AppLog.i("ABR: link ceiling → $it kbit/s") }
+            abr?.onSample(sample, appliedKbps = encoder.bitrateKbps)?.let { AppLog.i("ABR: link ceiling → $it kbit/s") }
             applyBitrate()
             StreamController.update {
                 it.copy(sendKbps = sendKbps, rttMs = sample.rttMs, lossPercent = loss, targetKbps = encoder.bitrateKbps)
@@ -235,13 +235,17 @@ class StreamPipeline(
 
     private val smart = profile.smartEncoding
     private val content = if (smart.contentAdaptive) {
-        ContentBitrate(profile.video.bitrateKbps, minOf(profile.advanced.minBitrateKbps, profile.video.bitrateKbps), smart.staticFraction)
+        ContentBitrate(minOf(profile.advanced.minBitrateKbps, profile.video.bitrateKbps), smart.staticFraction)
     } else null
     private var lastBitrateCheckUs = 0L
     private var lastRoiUs = 0L
+    /** Last motion sample, capture clock; the watchdog restores full rate if samples stop. */
+    @Volatile private var lastMotionSampleUs = Long.MIN_VALUE
+    private val bitrateLock = Any()
 
     /** Frames thread: scene motion drives the content bitrate and the quality regions. */
     private fun onMotion(m: MotionResult, cameraMoving: Boolean) {
+        lastMotionSampleUs = SensorHub.nowUs()
         if (m.learning && !cameraMoving) return
         content?.onActivity(m.activity, cameraMoving)
         val now = SensorHub.nowUs()
@@ -261,22 +265,45 @@ class StreamPipeline(
 
     private fun roiState(): Boolean? = if (!smart.regionOfInterest) null else encoder.roiSupported
 
-    /** Encoder target = link ABR ceiling, lowered further on static scenes. */
-    @Synchronized
-    private fun applyBitrate() {
+    /**
+     * Encoder target = link ABR ceiling, scaled down on static scenes. Decreases apply at once;
+     * increases are paced (×1.25 a second) so a burst never lands on an untested link. Own lock:
+     * called from the SRT and frames threads, and must not wait on stop().
+     */
+    private fun applyBitrate() = synchronized(bitrateLock) {
+        if (stopped) return
         val ceiling = abr?.targetKbps ?: profile.video.bitrateKbps
-        val target = content?.targetKbps(ceiling) ?: ceiling
+        val desired = content?.targetKbps(ceiling) ?: ceiling
         val current = encoder.bitrateKbps
+        val target = ContentBitrate.next(current, desired)
         if (kotlin.math.abs(target - current) >= maxOf(25, current / 20)) {
             encoder.setBitrate(target)
-            AppLog.i("Video bitrate → $target kbit/s (link ${ceiling}, scene ${content?.fraction?.let { "%.0f%%".format(it * 100) } ?: "off"})")
+            AppLog.i("Video bitrate → $target kbit/s (link $ceiling, scene ${content?.fraction?.let { "%.0f%%".format(it * 100) } ?: "off"})")
         }
+    }
+
+    /** No motion samples for 2 s (analysis stream lost): full rate and no quality regions. */
+    private fun motionWatchdog() {
+        val last = lastMotionSampleUs
+        if (last == Long.MIN_VALUE || SensorHub.nowUs() - last < 2_000_000) return
+        lastMotionSampleUs = Long.MIN_VALUE
+        restoreFullQuality()
+    }
+
+    private fun restoreFullQuality() {
+        content?.reset()
+        encoder.setRoi("")
+        applyBitrate()
+        StreamController.update { it.copy(scene = null) }
     }
 
     private fun onAnalysisUnavailable() {
         detector?.enabled = false
+        detector?.motionEnabled = false
         StreamController.publishTracks(emptyList())
-        StreamController.update { it.copy(detection = null, detectionUnavailable = true) }
+        // Only worth a banner when the user asked for detection; smart encoding just falls back.
+        StreamController.update { it.copy(detection = null, detectionUnavailable = detectionOn) }
+        restoreFullQuality()
     }
 
     val zoomRange get() = cameraInfo.zoomRange
@@ -358,6 +385,7 @@ class StreamPipeline(
     }
 
     private fun publishStatus() {
+        motionWatchdog()
         StreamController.update { it.copy(gnss = sensors.gnssStatus(SensorHub.nowUs())) }
     }
 

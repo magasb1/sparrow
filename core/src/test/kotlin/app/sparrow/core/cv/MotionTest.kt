@@ -68,17 +68,24 @@ class SchedulerTest {
     }
 
     @Test
-    fun `motion runs at the active rate and new blobs run at once`() {
+    fun `motion runs at the active rate, never faster`() {
         val s = DetectionScheduler(activeIntervalUs = 250_000)
-        assertTrue(s.shouldRun(0, motion(0.01f), false, emptyList()))
-        assertFalse(s.shouldRun(66_666, motion(0.01f), false, emptyList()))
-        assertTrue(s.shouldRun(266_666, motion(0.01f), false, emptyList()))
-        // An unexplained blob 133 ms later triggers immediately (past the 100 ms floor).
         val blob = Box(0.1f, 0.1f, 0.2f, 0.2f)
-        assertTrue(s.shouldRun(400_000, motion(0.01f, listOf(blob)), false, emptyList()))
-        // The same blob covered by a track does not.
-        val track = TrackedObject(1, 1, 0.9f, Box(0.08f, 0.08f, 0.22f, 0.22f), 3)
-        assertFalse(s.shouldRun(533_333, motion(0.01f, listOf(blob)), false, listOf(track)))
+        // Swaying foliage: blobs every frame that never become tracks still run only at 4 Hz.
+        val runs = (0 until 60).count { i -> s.shouldRun(i * 66_666L, motion(0.01f, listOf(blob)), false, emptyList()) }
+        assertEquals(15, runs) // 4 s at 4 Hz
+    }
+
+    @Test
+    fun `small unexplained blob wakes a static scene at the active rate`() {
+        val s = DetectionScheduler(activeIntervalUs = 250_000, keepAliveUs = 2_000_000, holdUs = 500_000)
+        assertTrue(s.shouldRun(0, motion(0f), false, emptyList()))
+        assertFalse(s.shouldRun(1_000_000, motion(0f), false, emptyList()))
+        val blob = Box(0.1f, 0.1f, 0.12f, 0.12f)
+        // Activity below threshold, but a blob no track explains: run without waiting for keep-alive.
+        assertTrue(s.shouldRun(1_066_666, motion(0.0005f, listOf(blob)), false, emptyList()))
+        val track = TrackedObject(1, 1, 0.9f, Box(0.08f, 0.08f, 0.14f, 0.14f), 3)
+        assertFalse(s.shouldRun(1_400_000, motion(0.0005f, listOf(blob)), false, listOf(track)))
     }
 
     @Test
@@ -92,22 +99,33 @@ class SchedulerTest {
 class ContentBitrateTest {
     @Test
     fun `static scenes fall to the floor slowly and motion restores at once`() {
-        val c = ContentBitrate(baseKbps = 1200, minKbps = 400, staticFraction = 0.5)
+        val c = ContentBitrate(minKbps = 400, staticFraction = 0.5)
         assertEquals(1200, c.targetKbps(1200))
         repeat(150) { c.onActivity(0f, false) } // ~10 s at 15 Hz
         assertTrue("fraction ${c.fraction}", c.fraction < 0.52)
         assertEquals(600, c.targetKbps(1200), 10)
         c.onActivity(0.05f, false)
         assertEquals(1200, c.targetKbps(1200))
-        // Never above the link ceiling, never below the floor.
+        // Scales the link ceiling (so ABR may still probe above the configured rate), never below the floor.
         assertEquals(900, c.targetKbps(900))
+        assertEquals(2000, c.targetKbps(2000))
         repeat(300) { c.onActivity(0f, false) }
         assertEquals(400, c.targetKbps(300))
+        c.reset()
+        assertEquals(1.0, c.fraction, 0.0)
+    }
+
+    @Test
+    fun `increases are paced, decreases are immediate`() {
+        assertEquals(800, ContentBitrate.next(600, 1200))
+        assertEquals(1050, ContentBitrate.next(800, 1200))
+        assertEquals(1200, ContentBitrate.next(1050, 1200))
+        assertEquals(500, ContentBitrate.next(1200, 500))
     }
 
     @Test
     fun `camera movement means full bitrate`() {
-        val c = ContentBitrate(1200, 400)
+        val c = ContentBitrate(400)
         repeat(200) { c.onActivity(0f, false) }
         c.onActivity(0f, cameraMoving = true)
         assertEquals(1.0, c.fraction, 1e-9)

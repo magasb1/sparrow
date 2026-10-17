@@ -61,7 +61,8 @@ class StreamPipeline(
     private var lastInspectorUs = 0L
 
     private var recordingFile: File? = null
-    private val recorder: OutputStream? = if (profile.advanced.recordLocally) openRecording() else null
+    @Volatile private var recorder: OutputStream? = null
+    private var stopped = false
 
     private val sender = SrtSender(profile.destination, object : SrtSender.Listener {
         override fun onState(state: LinkState) = StreamController.update { it.copy(link = state) }
@@ -123,6 +124,7 @@ class StreamPipeline(
 
     fun start() {
         AppLog.i("Starting '${profile.name}' with ${cameraInfo.label} at ${size.width}x${size.height}")
+        if (profile.advanced.recordLocally) recorder = openRecording()
         sensors.start()
         encoder.start()
         camera.start(encoder.inputSurface)
@@ -153,16 +155,22 @@ class StreamPipeline(
 
     fun onNetworkChanged() = sender.onNetworkChanged()
 
+    /** Releases everything; safe after a partial or failed start, and idempotent. */
+    @Synchronized
     fun stop() {
+        if (stopped) return
+        stopped = true
         AppLog.i("Stopping stream")
-        scheduler.shutdownNow()
-        sender.stop()
-        audio?.stop()
-        camera.close()
-        encoder.release()
-        sensors.stop()
-        muxer.flush()
+        runCatching { scheduler.shutdownNow() }
+        runCatching { sender.stop() }
+        runCatching { audio?.stop() }
+        // The camera must stop writing into the encoder surface before the encoder is released.
+        runCatching { camera.close() }
+        runCatching { encoder.release() }
+        runCatching { sensors.stop() }
+        runCatching { muxer.flush() }
         recorder?.let { runCatching { it.close() } }
+        recorder = null
     }
 
     private fun onVideo(cameraUs: Long, accessUnit: ByteArray, keyFrame: Boolean) {

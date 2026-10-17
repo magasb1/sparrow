@@ -71,6 +71,10 @@ class SrtSender(
         while (running) {
             try {
                 val s = open()
+                if (!running) {
+                    runCatching { s.close() }
+                    break
+                }
                 socket = s
                 connected = true
                 queue.clear()
@@ -86,7 +90,7 @@ class SrtSender(
                 val delay = backoff.nextDelayMs()
                 val reason = e.message ?: e.javaClass.simpleName
                 AppLog.w("SRT link down ($reason); retry in $delay ms")
-                listener.onState(LinkState.Reconnecting(delay, reason))
+                if (running) listener.onState(LinkState.Reconnecting(delay, reason))
                 synchronized(wake) { if (running) wake.wait(delay) }
             }
         }
@@ -109,14 +113,16 @@ class SrtSender(
 
     private fun open(): SrtSocket = when (destination.mode) {
         SrtMode.CALLER -> {
-            listener.onState(LinkState.Connecting)
+            if (running) listener.onState(LinkState.Connecting)
             SrtSocket().also {
+                // Stored before connecting so stop() can abort a blocking connect.
+                socket = it
                 configure(it)
                 it.connect(InetSocketAddress(destination.host, destination.port))
             }
         }
         SrtMode.LISTENER -> {
-            listener.onState(LinkState.Listening)
+            if (running) listener.onState(LinkState.Listening)
             val server = SrtSocket()
             serverSocket = server
             configure(server)
@@ -142,7 +148,7 @@ class SrtSender(
                 val elapsed = (now - lastStats) / 1e9
                 lastStats = now
                 val st = s.bstats(true)
-                listener.onStats(
+                if (running) listener.onStats(
                     LinkSample(
                         packetsSent = st.pktSent,
                         packetsLost = st.pktSndLoss,

@@ -35,12 +35,14 @@ class AudioEncoder(
     private fun loop() {
         val channelMask = if (settings.channels == 2) AudioFormat.CHANNEL_IN_STEREO else AudioFormat.CHANNEL_IN_MONO
         val minBuf = AudioRecord.getMinBufferSize(settings.sampleRate, channelMask, AudioFormat.ENCODING_PCM_16BIT)
-        val record = AudioRecord(
-            MediaRecorder.AudioSource.CAMCORDER, settings.sampleRate, channelMask,
-            AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuf * 2, 8192),
-        )
-        val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+        var record: AudioRecord? = null
+        var codec: MediaCodec? = null
         try {
+            record = AudioRecord(
+                MediaRecorder.AudioSource.CAMCORDER, settings.sampleRate, channelMask,
+                AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuf * 2, 8192),
+            )
+            codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
             codec.configure(
                 MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, settings.sampleRate, settings.channels).apply {
                     setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
@@ -71,6 +73,10 @@ class AudioEncoder(
                         framesRead += n / bytesPerFrame
                     } else {
                         codec.queueInputBuffer(inIndex, 0, 0, 0, 0)
+                        if (n < 0) {
+                            AppLog.e("Microphone read failed ($n); audio stopped, video continues")
+                            break
+                        }
                     }
                 }
                 var outIndex = codec.dequeueOutputBuffer(info, 0)
@@ -89,10 +95,10 @@ class AudioEncoder(
         } catch (e: Exception) {
             AppLog.e("Audio encoder stopped", e)
         } finally {
-            runCatching { record.stop() }
-            record.release()
-            runCatching { codec.stop() }
-            codec.release()
+            runCatching { record?.stop() }
+            runCatching { record?.release() }
+            runCatching { codec?.stop() }
+            runCatching { codec?.release() }
         }
     }
 }

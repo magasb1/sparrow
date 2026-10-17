@@ -122,7 +122,9 @@ class CameraSource(
     private var session: CameraCaptureSession? = null
     private var encoderSurface: Surface? = null
     private var preview: PreviewTarget? = null
-    private var closed = false
+    @Volatile private var closed = false
+    @Volatile private var opening = false
+    private val deviceClosed = java.util.concurrent.CountDownLatch(1)
 
     @Volatile var zoomRatio: Double = settings.zoomRatio.coerceIn(info.zoomRange)
         private set
@@ -139,8 +141,10 @@ class CameraSource(
     fun start(encoderSurface: Surface) {
         this.encoderSurface = encoderSurface
         val manager = context.getSystemService(CameraManager::class.java)
+        opening = true
         manager.openCamera(info.id, executor, object : CameraDevice.StateCallback() {
             override fun onOpened(camera: CameraDevice) {
+                opening = false
                 if (closed) {
                     camera.close(); return
                 }
@@ -149,7 +153,12 @@ class CameraSource(
                 configure()
             }
 
+            override fun onClosed(camera: CameraDevice) {
+                deviceClosed.countDown()
+            }
+
             override fun onDisconnected(camera: CameraDevice) {
+                opening = false
                 AppLog.w("Camera ${info.id} disconnected")
                 camera.close()
                 device = null
@@ -157,6 +166,7 @@ class CameraSource(
             }
 
             override fun onError(camera: CameraDevice, error: Int) {
+                opening = false
                 AppLog.e("Camera ${info.id} error $error")
                 camera.close()
                 device = null
@@ -268,14 +278,20 @@ class CameraSource(
             ?: Range(fps, fps)
     }
 
+    /**
+     * Closes the session and device and waits (up to 1.5 s) until the camera has let go, so the
+     * encoder surface can be released safely. Callbacks of a pending open still run on the thread.
+     */
     fun close() {
         closed = true
         handler.post {
             runCatching { session?.close() }
-            runCatching { device?.close() }
+            val d = device
             session = null
             device = null
+            if (d != null) runCatching { d.close() } else if (!opening) deviceClosed.countDown()
         }
+        if (Thread.currentThread() != thread) deviceClosed.await(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
         thread.quitSafely()
     }
 }

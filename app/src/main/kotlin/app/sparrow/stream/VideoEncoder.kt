@@ -83,8 +83,14 @@ class VideoEncoder(
                 AppLog.i("Encoder output format $format")
             }
         }, Handler(thread.looper))
-        mediaCodec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        inputSurface = mediaCodec.createInputSurface()
+        try {
+            mediaCodec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            inputSurface = mediaCodec.createInputSurface()
+        } catch (e: Exception) {
+            mediaCodec.release()
+            thread.quitSafely()
+            throw e
+        }
         AppLog.i("Video encoder ${mediaCodec.name}: $codec ${size.width}x${size.height} ${settings.fps} fps ${settings.bitrateKbps} kbit/s")
     }
 

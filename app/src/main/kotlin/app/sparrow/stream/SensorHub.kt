@@ -32,8 +32,8 @@ import kotlin.math.sin
  * from Location (API 34+) or from NMEA GGA sentences on older releases.
  */
 class SensorHub(private val context: Context) {
-    private val thread = HandlerThread("sensors").apply { start() }
-    private val handler = Handler(thread.looper)
+    private val thread = HandlerThread("sensors")
+    private val handler by lazy { Handler(thread.looper) }
     private val sensorManager = context.getSystemService(SensorManager::class.java)
     private val locationManager = context.getSystemService(LocationManager::class.java)
 
@@ -73,6 +73,7 @@ class SensorHub(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun start() {
+        thread.start()
         val rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
         if (rotationSensor == null) {
             AppLog.w("No rotation vector sensor: attitude tags will be omitted")
@@ -86,6 +87,7 @@ class SensorHub(private val context: Context) {
     }
 
     fun stop() {
+        if (!thread.isAlive) return
         sensorManager.unregisterListener(sensorListener)
         runCatching {
             locationManager.removeUpdates(locationListener)

@@ -9,6 +9,7 @@ import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -34,6 +35,7 @@ class StreamingService : LifecycleService() {
     private var pipeline: StreamPipeline? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+    private var wifiHighPerfLock: WifiManager.WifiLock? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var notificationJob: Job? = null
     private var previewJob: Job? = null
@@ -101,15 +103,22 @@ class StreamingService : LifecycleService() {
 
     private fun launchPipeline() {
         val profile = SparrowApp.get(this).profiles.active
+        var self: StreamPipeline? = null
         try {
-            pipeline = StreamPipeline(this, profile) { reason -> main.post { onPipelineFailure(reason) } }.also {
-                it.start()
-                it.setPreview(StreamController.preview.value)
-                StreamController.zoom.value?.let { z -> it.setZoom(z) }
-                StreamController.update { st -> st.copy(zoomRange = it.zoomRange) }
+            // Failures are only honoured from the current pipeline, so one fault reported by
+            // several components (or by an old pipeline) costs a single restart.
+            val p = StreamPipeline(this, profile) { reason ->
+                main.post { if (self != null && pipeline === self) onPipelineFailure(reason) }
             }
+            self = p
+            pipeline = p
+            p.start()
+            p.setPreview(StreamController.preview.value)
+            StreamController.zoom.value?.let { z -> p.setZoom(z) }
+            StreamController.update { st -> st.copy(zoomRange = p.zoomRange) }
         } catch (e: Exception) {
             AppLog.e("Pipeline start failed", e)
+            // onPipelineFailure stops the half-started pipeline, if one was created.
             onPipelineFailure(e.message ?: "start failed")
         }
     }
@@ -152,7 +161,7 @@ class StreamingService : LifecycleService() {
     }
 
     override fun onDestroy() {
-        if (pipeline != null) stopStreaming(userRequested = false)
+        if (!stopping) stopStreaming(userRequested = false)
         super.onDestroy()
     }
 
@@ -161,16 +170,23 @@ class StreamingService : LifecycleService() {
     private fun acquireLocks() {
         wakeLock = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "sparrow:stream").apply { acquire() }
-        @Suppress("DEPRECATION")
-        wifiLock = getSystemService(WifiManager::class.java)
-            .createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "sparrow:stream").apply { acquire() }
+        val wifi = getSystemService(WifiManager::class.java)
+        wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "sparrow:stream").apply { acquire() }
+        // The low-latency lock only applies with the screen on; below API 34 the high-performance
+        // lock keeps Wi-Fi power save off while the screen is off.
+        if (Build.VERSION.SDK_INT < 34) {
+            @Suppress("DEPRECATION")
+            wifiHighPerfLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "sparrow:stream-hp").apply { acquire() }
+        }
     }
 
     private fun releaseLocks() {
         wakeLock?.takeIf { it.isHeld }?.release()
         wifiLock?.takeIf { it.isHeld }?.release()
+        wifiHighPerfLock?.takeIf { it.isHeld }?.release()
         wakeLock = null
         wifiLock = null
+        wifiHighPerfLock = null
     }
 
     private fun registerNetworkCallback() {

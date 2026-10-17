@@ -64,12 +64,12 @@ class StreamPipeline(
     }
     private val size = Size(orientation.width, orientation.height)
 
-    /** Object detection on a low-resolution copy of the stream; null if the camera has no matching YUV size. */
-    private val detector: DetectionEngine? = DetectionEngine.analysisSize(cameraInfo.yuvSizes, sensorAspect)?.let { analysis ->
-        DetectionEngine(context, profile.detection, orientation.rotationDeg, analysis, { camera.toCaptureUs(it) }) { stats ->
-            StreamController.update { it.copy(detection = stats) }
-        }
-    }
+    /**
+     * Object detection on a low-resolution copy of the stream. Created the first time detection is
+     * switched on, so a stream without detection carries no extra threads, buffers or camera output.
+     */
+    @Volatile private var detector: DetectionEngine? = null
+    private val analysisSize = DetectionEngine.analysisSize(cameraInfo.yuvSizes, sensorAspect)
     private var renderer: RotatingRenderer? = null
 
     private val composer = MetadataComposer(
@@ -149,7 +149,7 @@ class StreamPipeline(
         )
     } else null
 
-    private val camera = CameraSource(context, cameraInfo, profile.video, onFatalError)
+    private val camera = CameraSource(context, cameraInfo, profile.video, onFatalError, onAnalysisUnavailable = { onAnalysisUnavailable() })
 
     private val audio = if (profile.audio.enabled) {
         AudioEncoder(profile.audio) { captureUs, adts -> muxer.writeAudio(captureUs, adts, SensorHub.nowUs()) }
@@ -167,8 +167,9 @@ class StreamPipeline(
                 encoder.inputSurface, cameraSize.width, cameraSize.height, orientation.rotationDeg, size.width, size.height,
             ).also { renderer = it }.inputSurface
         }
-        camera.start(cameraTarget)
+        // Before start(), so the first capture session already includes the analysis stream.
         setDetectionEnabled(profile.detection.enabled)
+        camera.start(cameraTarget)
         audio?.start()
         sender.start()
         scheduler.scheduleWithFixedDelay({ muxer.tick(SensorHub.nowUs()) }, 10, 10, TimeUnit.MILLISECONDS)
@@ -190,17 +191,35 @@ class StreamPipeline(
     fun setZoom(ratio: Double) = camera.setZoom(ratio)
 
     /** Turns detection on or off live; the analysis stream is only in the camera session while on. */
+    @Synchronized
     fun setDetectionEnabled(on: Boolean) {
-        val d = detector ?: return
+        if (stopped) return
+        if (on && (analysisSize == null || cameraInfo.id in CameraSource.analysisUnsupportedCameras)) {
+            onAnalysisUnavailable()
+            return
+        }
+        val d = detector ?: if (on) createDetector(analysisSize!!) else return
         if (d.enabled == on) return
         d.enabled = on
-        if (!on) {
-            d.tracker.clear()
+        if (on) {
+            // Adding the output rebuilds the session once (a short gap in the video when live);
+            // switching off keeps it, so the stream is not interrupted again.
+            camera.setAnalysis(d.surface)
+        } else {
             StreamController.publishTracks(emptyList())
             StreamController.update { it.copy(detection = null) }
         }
-        camera.setAnalysis(if (on) d.surface else null)
         AppLog.i("Object detection ${if (on) "on" else "off"}")
+    }
+
+    private fun createDetector(size: Size) = DetectionEngine(
+        context, profile.detection, orientation.rotationDeg, size, { camera.toCaptureUs(it) },
+    ) { stats -> StreamController.update { it.copy(detection = stats) } }.also { detector = it }
+
+    private fun onAnalysisUnavailable() {
+        detector?.enabled = false
+        StreamController.publishTracks(emptyList())
+        StreamController.update { it.copy(detection = null, detectionUnavailable = true) }
     }
 
     val zoomRange get() = cameraInfo.zoomRange

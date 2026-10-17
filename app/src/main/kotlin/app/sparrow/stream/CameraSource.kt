@@ -119,6 +119,8 @@ class CameraSource(
     val info: CameraInfo,
     private val settings: VideoSettings,
     private val onFatalError: (String) -> Unit,
+    /** Called once if this camera cannot run the analysis stream next to the others. */
+    private val onAnalysisUnavailable: () -> Unit = {},
 ) {
     private val thread = HandlerThread("camera").apply { start() }
     private val handler = Handler(thread.looper)
@@ -128,9 +130,7 @@ class CameraSource(
     private var encoderSurface: Surface? = null
     private var preview: PreviewTarget? = null
     private var analysis: Surface? = null
-    /** Set when the device rejected the analysis stream; detection is then unavailable. */
-    @Volatile var analysisUnsupported = false
-        private set
+    private var lastConfigureWithAnalysisMs = 0L
     @Volatile private var closed = false
     @Volatile private var opening = false
     private val deviceClosed = java.util.concurrent.CountDownLatch(1)
@@ -192,6 +192,8 @@ class CameraSource(
 
             override fun onError(camera: CameraDevice, error: Int) {
                 opening = false
+                // Some devices report an unsupported stream combination as a device error.
+                if (analysis != null && SystemClock.elapsedRealtime() - lastConfigureWithAnalysisMs < 2000) markAnalysisUnsupported()
                 AppLog.e("Camera ${info.id} error $error")
                 camera.close()
                 device = null
@@ -216,16 +218,34 @@ class CameraSource(
         if (target == null && Thread.currentThread() != thread) done.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
 
-    /** Adds or removes the low-resolution analysis output (object detection). */
-    fun setAnalysis(surface: Surface?) {
+    /**
+     * Adds the low-resolution analysis output (object detection). It then stays in the session:
+     * switching detection off only stops the analysis, so the video is never interrupted for it.
+     */
+    fun setAnalysis(surface: Surface) {
         handler.post {
-            val target = surface.takeUnless { analysisUnsupported }
-            if (analysis != target) {
-                analysis = target
+            if (analysis != surface && info.id !in analysisUnsupportedCameras) {
+                analysis = surface
                 configure()
             }
         }
     }
+
+    private fun markAnalysisUnsupported() {
+        if (analysisUnsupportedCameras.add(info.id)) {
+            AppLog.w("Camera ${info.id} cannot add the analysis stream; object detection unavailable")
+            onAnalysisUnavailable()
+        }
+    }
+
+    /** Asks the camera whether it can run these outputs together (API 29+); unknown means yes. */
+    private fun supported(camera: CameraDevice, outputs: List<OutputConfiguration>): Boolean = runCatching {
+        val probe = SessionConfiguration(SessionConfiguration.SESSION_REGULAR, outputs, executor, object : CameraCaptureSession.StateCallback() {
+            override fun onConfigured(session: CameraCaptureSession) = Unit
+            override fun onConfigureFailed(session: CameraCaptureSession) = Unit
+        })
+        camera.isSessionConfigurationSupported(probe)
+    }.getOrDefault(true)
 
     fun setZoom(ratio: Double) {
         handler.post {
@@ -238,13 +258,21 @@ class CameraSource(
         val camera = device ?: return
         session?.close()
         session = null
-        val targets = listOfNotNull(encoderSurface, preview?.surface?.takeIf { it.isValid }, analysis)
+        if (info.id in analysisUnsupportedCameras) analysis = null
+        var targets = listOfNotNull(encoderSurface, preview?.surface?.takeIf { it.isValid }, analysis)
         if (targets.isEmpty()) return
-        val outputs = targets.map { s ->
+        fun outputsFor(t: List<Surface>) = t.map { s ->
             OutputConfiguration(s).apply {
                 if (Build.VERSION.SDK_INT >= 33) timestampBase = OutputConfiguration.TIMESTAMP_BASE_REALTIME
             }
         }
+        if (analysis != null && !supported(camera, outputsFor(targets))) {
+            markAnalysisUnsupported()
+            targets = targets - analysis!!
+            analysis = null
+        }
+        if (analysis != null) lastConfigureWithAnalysisMs = SystemClock.elapsedRealtime()
+        val outputs = outputsFor(targets)
         val callback = object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(s: CameraCaptureSession) {
                 if (closed) {
@@ -259,9 +287,8 @@ class CameraSource(
                 AppLog.e("Camera session configuration failed")
                 if (analysis != null) {
                     // Three streams are too many for some cameras: give up detection first.
-                    AppLog.w("Camera cannot add the analysis stream; object detection disabled")
+                    markAnalysisUnsupported()
                     analysis = null
-                    analysisUnsupported = true
                     configure()
                 } else if (preview != null && encoderSurface != null) {
                     // Some devices cannot add a preview stream at this size; keep streaming without it.
@@ -338,5 +365,10 @@ class CameraSource(
         }
         if (Thread.currentThread() != thread) deviceClosed.await(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
         thread.quitSafely()
+    }
+
+    companion object {
+        /** Cameras that rejected the analysis stream in this process; not retried on restarts. */
+        val analysisUnsupportedCameras: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     }
 }

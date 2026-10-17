@@ -285,7 +285,7 @@ fun CameraViewfinder(video: VideoSettings, idlePreview: Boolean) {
     LaunchedEffect(idlePreview, target, info) {
         val t = target
         if (idlePreview && t != null && info != null) {
-            val cam = idleCamera ?: CameraSource(context, info, video) { }.also {
+            val cam = idleCamera ?: CameraSource(context, info, video, onFatalError = {}).also {
                 it.start(null)
                 idleCamera = it
             }
@@ -408,7 +408,9 @@ private fun formatDuration(ms: Long): String {
 private fun InfoChips(status: StreamStatus, profile: Profile, targets: Int?, stacked: Boolean, modifier: Modifier) {
     val content: @Composable () -> Unit = {
         if (status.running) {
-            if (targets != null && status.detection != null) {
+            if (status.detectionUnavailable) {
+                Chip("Detection unavailable", icon = Icons.Outlined.CenterFocusStrong, tint = WarnAmber)
+            } else if (targets != null && status.detection != null) {
                 Chip(if (targets == 1) "1 target" else "$targets targets", icon = Icons.Outlined.CenterFocusStrong)
             }
             if (status.link == LinkState.Live) {

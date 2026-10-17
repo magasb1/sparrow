@@ -185,7 +185,10 @@ Known gaps and notes:
 * The FOV ignores the small crop added by electronic stabilisation.
 * ST 0903 VMTI is written from the standard's structure as remembered (tags 3–12, 101; VTarget
   1–3, 5, 6, 17, 102); validate it against the customer's VMTI-capable receiver.
-* Some cameras cannot run a third (analysis) stream; detection then switches itself off.
+* Some cameras cannot run a third (analysis) stream; detection then reports "unavailable" for that
+  camera until the app restarts.
+* Switching detection on during a live stream rebuilds the capture session once (a short gap in
+  the video) if it was off at Go live; switching it off never interrupts the video.
 * Portrait and reverse-landscape streams go through a GPU rotation stage (`RotatingRenderer`);
   its direction and the matching KLV attitude are unit-tested as math only and need checking on
   a device.

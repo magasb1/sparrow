@@ -102,7 +102,7 @@ class ScreenshotTest {
         StreamController.update {
             StreamStatus(
                 link = LinkState.Live, running = true, profileName = "Field team",
-                targetKbps = 4000, sendKbps = 3912.0, rttMs = 48.0, lossPercent = 0.2,
+                targetKbps = 1200, sendKbps = 1164.0, rttMs = 48.0, lossPercent = 0.2,
                 gnss = GnssStatus(hasFix = true, accuracyM = 3.8f, ageMs = 400, usingGnssTime = true),
                 resolution = resolution, zoomRange = 1.0..8.0,
                 liveSinceMs = SystemClock.elapsedRealtime() - 754_000,
@@ -146,7 +146,7 @@ class ScreenshotTest {
         StreamController.update {
             StreamStatus(
                 link = LinkState.Reconnecting(4000, "Connection setup failure: connection timed out"), running = true,
-                profileName = "Field team", targetKbps = 4000,
+                profileName = "Field team", targetKbps = 1200,
                 gnss = GnssStatus(hasFix = false, ageMs = 12_000), resolution = "1280×720 H264",
             )
         }
@@ -182,13 +182,13 @@ class ScreenshotTest {
     @Test
     fun log() {
         AppLog.i("Starting 'Field team' with Back camera 0 (4.4 mm, 66° HFOV) at 1280x720")
-        AppLog.i("Video encoder c2.qti.avc.encoder: H264 1280x720 30 fps 4000 kbit/s")
+        AppLog.i("Video encoder c2.qti.avc.encoder: H264 1280x720 15 fps 1200 kbit/s")
         AppLog.i("Camera 0 opened")
         AppLog.w("SRT link down (Connection setup failure: connection timed out); retry in 1000 ms")
         AppLog.i("SRT connected to video.example.net/203.0.113.10:8890")
         AppLog.i("Default network changed to 112")
         AppLog.i("Network changed; reconnecting SRT")
-        AppLog.i("ABR: video bitrate → 3000 kbit/s")
+        AppLog.i("ABR: video bitrate → 900 kbit/s")
         shot("08-log") { LogScreen(onBack = {}) }
     }
 }

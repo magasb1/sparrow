@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.util.Size
 import android.view.Surface
+import app.sparrow.core.config.RateControl
 import app.sparrow.core.config.VideoSettings
 import app.sparrow.core.ts.AccessUnitAssembler
 import app.sparrow.core.ts.VideoCodec
@@ -49,9 +50,14 @@ class VideoEncoder(
             setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
             setInteger(MediaFormat.KEY_PRIORITY, 0) // realtime
             setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 1_000_000L / settings.fps * 3)
-            if (supportsCbr()) setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+            // Drop camera frames beyond the configured rate (many cameras only offer 15–30 fps ranges).
+            setFloat(MediaFormat.KEY_MAX_FPS_TO_ENCODER, settings.fps.toFloat())
+            val mode = if (settings.rateControl == RateControl.CBR) MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR
+            else MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR
+            if (supportsMode(mode)) setInteger(MediaFormat.KEY_BITRATE_MODE, mode)
         }
-        mediaCodec.setCallback(object : MediaCodec.Callback() {
+        val profiled = MediaFormat(format).apply { applyBestProfile(this, size) }
+        val callback = object : MediaCodec.Callback() {
             override fun onInputBufferAvailable(codec: MediaCodec, index: Int) = Unit
 
             override fun onOutputBufferAvailable(codec: MediaCodec, index: Int, info: MediaCodec.BufferInfo) {
@@ -82,9 +88,17 @@ class VideoEncoder(
             override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
                 AppLog.i("Encoder output format $format")
             }
-        }, Handler(thread.looper))
+        }
+        mediaCodec.setCallback(callback, Handler(thread.looper))
         try {
-            mediaCodec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            try {
+                mediaCodec.configure(profiled, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            } catch (e: Exception) {
+                AppLog.w("Encoder rejected the requested profile; using its default", e)
+                mediaCodec.reset()
+                mediaCodec.setCallback(callback, Handler(thread.looper))
+                mediaCodec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            }
             inputSurface = mediaCodec.createInputSurface()
         } catch (e: Exception) {
             mediaCodec.release()
@@ -115,10 +129,25 @@ class VideoEncoder(
         thread.quitSafely()
     }
 
-    private fun supportsCbr(): Boolean = runCatching {
-        mediaCodec.codecInfo.getCapabilitiesForType(mime).encoderCapabilities!!
-            .isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+    private fun supportsMode(mode: Int): Boolean = runCatching {
+        mediaCodec.codecInfo.getCapabilitiesForType(mime).encoderCapabilities!!.isBitrateModeSupported(mode)
     }.getOrDefault(false)
+
+    /**
+     * H.264 High profile (about 10–15% fewer bits than the Baseline many encoders default to) or
+     * HEVC Main, when the encoder offers it. No B-frames either way, for latency.
+     */
+    private fun applyBestProfile(format: MediaFormat, size: Size) {
+        val levels = runCatching { mediaCodec.codecInfo.getCapabilitiesForType(mime).profileLevels.toList() }.getOrDefault(emptyList())
+        if (codec == VideoCodec.H264) {
+            val high = levels.filter { it.profile == MediaCodecInfo.CodecProfileLevel.AVCProfileHigh }.maxByOrNull { it.level } ?: return
+            val wanted = if (size.width * size.height <= 1280 * 720) MediaCodecInfo.CodecProfileLevel.AVCLevel31 else MediaCodecInfo.CodecProfileLevel.AVCLevel4
+            format.setInteger(MediaFormat.KEY_PROFILE, high.profile)
+            format.setInteger(MediaFormat.KEY_LEVEL, minOf(wanted, high.level))
+        } else if (levels.any { it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain }) {
+            format.setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain)
+        }
+    }
 
     companion object {
         /** True if a hardware encoder for [mime] accepts [width]×[height] (portrait sizes are not universal). */

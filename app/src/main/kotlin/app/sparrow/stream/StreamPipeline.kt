@@ -74,7 +74,7 @@ class StreamPipeline(
     )
     private val klvIntervalUs = (1_000_000 / profile.metadata.rateHz).toLong()
     private val halfFrameUs = 500_000L / profile.video.fps
-    private var lastKlvUs = Long.MIN_VALUE
+    private var nextKlvUs = Long.MIN_VALUE
     private var lastInspectorUs = 0L
 
     private var recordingFile: File? = null
@@ -128,7 +128,8 @@ class StreamPipeline(
     private val abr = if (profile.advanced.adaptiveBitrate) {
         BitrateController(
             minKbps = profile.advanced.minBitrateKbps,
-            maxKbps = profile.advanced.maxBitrateKbps,
+            // Never cap below the configured bitrate; a higher maximum lets ABR probe upwards.
+            maxKbps = maxOf(profile.advanced.maxBitrateKbps, profile.video.bitrateKbps),
             initialKbps = profile.video.bitrateKbps,
             latencyMs = profile.destination.latencyMs,
         )
@@ -201,8 +202,11 @@ class StreamPipeline(
         val now = SensorHub.nowUs()
         muxer.writeVideo(captureUs, accessUnit, keyFrame, now)
         // KLV samples are aligned to video frames so their PTS equals the frame's (NFR-2).
-        if (lastKlvUs == Long.MIN_VALUE || captureUs - lastKlvUs >= klvIntervalUs - halfFrameUs) {
-            lastKlvUs = captureUs
+        // Samples land on the frame nearest each scheduled time, so the average rate is exact even
+        // when it does not divide the frame rate (10 Hz at 15 fps).
+        if (nextKlvUs == Long.MIN_VALUE || captureUs >= nextKlvUs - halfFrameUs) {
+            nextKlvUs = if (nextKlvUs == Long.MIN_VALUE || nextKlvUs + klvIntervalUs < captureUs) captureUs + klvIntervalUs
+            else nextKlvUs + klvIntervalUs
             writeKlv(captureUs, now)
         }
     }

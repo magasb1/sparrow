@@ -96,6 +96,24 @@ ffmpeg -i 'srt://0.0.0.0:9000?mode=listener' -map 0:d -c copy -f data - | xxd | 
 
 MediaMTX and SRS accept the stream as a publisher (`streamid=publish:<path>` for MediaMTX).
 
+## Default profile
+
+Tuned for the lowest bandwidth that still gives a clean picture:
+
+| Setting | Default | Why |
+| --- | --- | --- |
+| Video | 1280×720, 15 fps, H.264 High profile | Half the frames of 30 fps; High profile needs ~10–15% fewer bits than Baseline |
+| Bitrate | 1.2 Mbit/s, variable (VBR) | VBR saves bits on static scenes and spends them on motion |
+| Keyframe interval | 2 s | Keyframes are the costliest frames; receivers still start at once because every SRT connect requests an IDR |
+| Adaptive bitrate | 400–1200 kbit/s | Only lowers the bitrate under congestion, never raises it above the target |
+| Metadata | ST 0601 at 10 Hz | About 30 kbit/s with TS overhead |
+| Audio | Off | |
+
+The camera is asked for a fixed 15 fps range where one exists, and the encoder drops any frames
+above 15 fps. Choosing HEVC in Settings typically cuts another 30–40% at the same quality, if the
+receivers support it. The SRS lists 30 fps / 4 Mbit/s / 1 s GOP as defaults; these were lowered on
+request.
+
 ## Metadata model
 
 A phone has no gimbal, so the platform frame is chosen to keep every angle exact and in range:

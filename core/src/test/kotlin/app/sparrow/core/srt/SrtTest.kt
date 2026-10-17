@@ -83,3 +83,18 @@ class SrtTest {
         assertEquals(2, errors.size)
     }
 }
+
+class DefaultProfileTest {
+    @Test
+    fun `default profile is 720p15 low bandwidth and valid`() {
+        val p = Profile(destination = Destination(host = "h"))
+        assertEquals(1280 to 720, p.video.width to p.video.height)
+        assertEquals(15, p.video.fps)
+        assertEquals(1200, p.video.bitrateKbps)
+        assertEquals(app.sparrow.core.config.RateControl.VBR, p.video.rateControl)
+        assertEquals(2.0, p.video.gopSeconds, 0.0)
+        // ABR may only lower the bitrate.
+        assertEquals(p.video.bitrateKbps, p.advanced.maxBitrateKbps)
+        assertTrue(p.validate().isEmpty())
+    }
+}

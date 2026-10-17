@@ -274,7 +274,10 @@ class CameraSource(
 
     private fun fpsRange(): Range<Int> {
         val fps = settings.fps
+        // Prefer a fixed rate, then a range capped at the target (AE may slow down in the dark),
+        // then any range containing it; the encoder drops the excess (KEY_MAX_FPS_TO_ENCODER).
         return info.fpsRanges.firstOrNull { it.lower == fps && it.upper == fps }
+            ?: info.fpsRanges.filter { it.upper == fps }.maxByOrNull { it.lower }
             ?: info.fpsRanges.filter { fps in it.lower..it.upper }.minByOrNull { it.upper - it.lower }
             ?: Range(fps, fps)
     }

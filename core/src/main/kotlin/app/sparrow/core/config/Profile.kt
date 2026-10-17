@@ -11,6 +11,9 @@ enum class SrtMode { CALLER, LISTENER }
 
 enum class FocusMode { CONTINUOUS, INFINITY }
 
+/** Encoder rate control. VBR spends bits on motion and saves them on static scenes. */
+enum class RateControl { VBR, CBR }
+
 @Serializable
 data class Destination(
     val mode: SrtMode = SrtMode.CALLER,
@@ -32,9 +35,12 @@ data class VideoSettings(
     val codec: VideoCodec = VideoCodec.H264,
     val width: Int = 1280,
     val height: Int = 720,
-    val fps: Int = 30,
-    val bitrateKbps: Int = 4000,
-    val gopSeconds: Double = 1.0,
+    // Defaults favour low bandwidth: 720p at 15 fps is about 1.2 Mbit/s with H.264 High profile.
+    val fps: Int = 15,
+    val bitrateKbps: Int = 1200,
+    /** A receiver joining mid-stream gets an IDR on connect, so a longer GOP costs no join time. */
+    val gopSeconds: Double = 2.0,
+    val rateControl: RateControl = RateControl.VBR,
     val zoomRatio: Double = 1.0,
     val focus: FocusMode = FocusMode.CONTINUOUS,
     val stabilization: Boolean = true,
@@ -65,8 +71,9 @@ data class MetadataSettings(
 @Serializable
 data class AdvancedSettings(
     val adaptiveBitrate: Boolean = true,
-    val minBitrateKbps: Int = 500,
-    val maxBitrateKbps: Int = 6000,
+    val minBitrateKbps: Int = 400,
+    /** Equal to the video bitrate by default, so ABR only ever lowers it. */
+    val maxBitrateKbps: Int = 1200,
     val ptsDelayMs: Int = 250,
     val recordLocally: Boolean = false,
 )

@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.sparrow.core.config.FocusMode
 import app.sparrow.core.config.Profile
+import app.sparrow.core.config.RateControl
 import app.sparrow.core.config.SrtMode
 import app.sparrow.core.klv.Tag
 import app.sparrow.core.srt.SrtUrl
@@ -125,7 +126,10 @@ fun SettingsScreen(profiles: ProfileRepository, onBack: () -> Unit) {
                 }
                 NumberRow("Frame rate", p.video.fps, { v -> v.toIntOrNull()?.let { p = p.copy(video = p.video.copy(fps = it)) } }, unit = "fps")
                 NumberRow("Bitrate", p.video.bitrateKbps, { v -> v.toIntOrNull()?.let { p = p.copy(video = p.video.copy(bitrateKbps = it)) } }, unit = "kbit/s")
-                NumberRow("GOP", p.video.gopSeconds, { v -> v.toDoubleOrNull()?.let { p = p.copy(video = p.video.copy(gopSeconds = it)) } }, decimal = true, unit = "s")
+                ChoiceRow("Rate control", RateControl.entries, p.video.rateControl, { p = p.copy(video = p.video.copy(rateControl = it)) }) {
+                    if (it == RateControl.VBR) "Variable (VBR)" else "Constant (CBR)"
+                }
+                NumberRow("Keyframe interval (GOP)", p.video.gopSeconds, { v -> v.toDoubleOrNull()?.let { p = p.copy(video = p.video.copy(gopSeconds = it)) } }, decimal = true, unit = "s")
                 NumberRow("Initial zoom", p.video.zoomRatio, { v -> v.toDoubleOrNull()?.let { p = p.copy(video = p.video.copy(zoomRatio = it)) } }, decimal = true, unit = "×")
                 ChoiceRow("Focus", FocusMode.entries, p.video.focus, { p = p.copy(video = p.video.copy(focus = it)) }) {
                     if (it == FocusMode.CONTINUOUS) "Continuous" else "Infinity"

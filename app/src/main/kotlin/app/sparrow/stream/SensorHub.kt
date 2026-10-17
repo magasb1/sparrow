@@ -53,6 +53,8 @@ class SensorHub(private val context: Context) {
     private var poseIndex = 0
     private val rotation = FloatArray(9)
 
+    val hasGyroscope: Boolean get() = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null
+
     /** Receives raw gyroscope samples (capture-clock µs, rad/s in device axes) for stabilisation. */
     @Volatile var gyroSink: ((Long, Float, Float, Float) -> Unit)? = null
 
@@ -89,7 +91,8 @@ class SensorHub(private val context: Context) {
         if (rotationSensor == null) {
             AppLog.w("No rotation vector sensor: attitude tags will be omitted")
         } else {
-            sensorManager.registerListener(sensorListener, rotationSensor, 20_000, handler)
+            // 100 Hz keeps the levelled horizon steady during quick rolls.
+            sensorManager.registerListener(sensorListener, rotationSensor, 10_000, handler)
         }
         if (gyroSink != null) {
             sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let {

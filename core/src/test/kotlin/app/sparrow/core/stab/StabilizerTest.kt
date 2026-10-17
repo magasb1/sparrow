@@ -94,6 +94,34 @@ class StabilizerTest {
     }
 
     @Test
+    fun `a tilt beyond the crop is levelled partly and shake is still removed`() {
+        val base = Mat3(doubleArrayOf(0.0, -1.0, 0.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0))
+        val sensorPose = CameraPose.fromDevice(base, LensFacing.BACK, 90)
+        val roll = Math.toRadians(12.0)
+        val tilted = CameraPose(sensorPose.forward, (sensorPose.up * kotlin.math.cos(roll) + sensorPose.right * kotlin.math.sin(roll)).normalized())
+        val st = stab(level = true)
+        val amp = Math.toRadians(0.4)
+        var t = 0L
+        var residualShake = 0.0
+        var rollLeft = 0.0
+        for (frame in 0 until 120) {
+            repeat(13) {
+                val rate = amp * 2 * PI * 5 * kotlin.math.cos(2 * PI * 5 * t / 1e6)
+                st.onGyro(t, rate.toFloat(), 0f, 0f)
+                t += 5_000
+            }
+            val f = st.frame(t, tilted)
+            if (frame > 40) {
+                val out = tilted.corrected(f.correction)
+                rollLeft = maxOf(rollLeft, kotlin.math.abs(out.rollDeg))
+                residualShake = maxOf(residualShake, kotlin.math.abs(Math.toDegrees(kotlin.math.asin(out.forward.z))))
+            }
+        }
+        assertTrue("roll left $rollLeft°", rollLeft < 12.0 && rollLeft > 1.0) // partly levelled
+        assertTrue("shake left $residualShake°", residualShake < 0.2) // ±0.4° tremor mostly removed
+    }
+
+    @Test
     fun `levelling also works for a portrait stream`() {
         // Phone upright in portrait facing north, rolled 4°: stream rotation 90.
         val r = Mat3(doubleArrayOf(1.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 1.0, 0.0))

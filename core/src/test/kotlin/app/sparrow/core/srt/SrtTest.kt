@@ -77,6 +77,16 @@ class SrtTest {
     }
 
     @Test
+    fun `old stabilisation flag migrates instead of turning into gyro`() {
+        fun json(flag: Boolean) = ProfileCodec.export(listOf(Profile(name = "Old")))
+            .replace("\"stabilizationMode\": \"GYRO\"", "\"stabilization\": $flag")
+        assertEquals(app.sparrow.core.config.StabilizationMode.CAMERA, ProfileCodec.import(json(true)).single().video.stabilizationMode)
+        assertEquals(app.sparrow.core.config.StabilizationMode.OFF, ProfileCodec.import(json(false)).single().video.stabilizationMode)
+        // New files keep their mode.
+        assertEquals(app.sparrow.core.config.StabilizationMode.GYRO, ProfileCodec.import(ProfileCodec.export(listOf(Profile()))).single().video.stabilizationMode)
+    }
+
+    @Test
     fun `validation catches bad settings`() {
         assertTrue(Profile(destination = Destination(host = "h")).validate().isEmpty())
         val errors = Profile(destination = Destination(host = "", passphrase = "short")).validate()

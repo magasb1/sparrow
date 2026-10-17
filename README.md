@@ -118,7 +118,7 @@ request.
 
 | Mode | What it does |
 | --- | --- |
-| Gyro (default) | Sparrow integrates the gyroscope (200 Hz) and renders a steadied virtual camera on the GPU with a 10 % crop; fast pans pass through with a little lag. **Level horizon** also rolls the virtual camera so the horizon stays level (20 % crop). |
+| Gyro (default) | Sparrow integrates the gyroscope (200 Hz) and renders a steadied virtual camera on the GPU with a 10 % crop; fast pans pass through with a little lag. **Level horizon** also rolls the virtual camera so the horizon stays level for tilts up to about 6° (25 % crop); larger tilts are partly corrected and shake removal always comes first. Optical stabilisation is switched off in this mode, and phones without a gyroscope fall back to Camera mode. |
 | Camera | The device's own electronic stabilisation. |
 | Off | Raw camera frames. |
 

@@ -60,8 +60,16 @@ class StreamPipeline(
     private val size = Size(orientation.width, orientation.height)
     private var renderer: FrameRenderer? = null
 
+    /** Video settings as run: without a gyroscope, Gyro mode falls back to the camera's own. */
+    private val video = profile.video.let { v ->
+        if (v.stabilizationMode == StabilizationMode.GYRO && !sensors.hasGyroscope) {
+            AppLog.w("No gyroscope: using the camera's own stabilisation")
+            v.copy(stabilizationMode = StabilizationMode.CAMERA)
+        } else v
+    }
+
     /** Gyro stabilisation (and levelling); null unless the profile asks for it and there is a gyroscope. */
-    private val stabilizer: Stabilizer? = if (profile.video.stabilizationMode == StabilizationMode.GYRO) {
+    private val stabilizer: Stabilizer? = if (video.stabilizationMode == StabilizationMode.GYRO) {
         val (h, v) = cameraInfo.fieldOfView(cameraSize.width.toDouble() / cameraSize.height, profile.video.zoomRatio.coerceIn(cameraInfo.zoomRange))
         Stabilizer(cameraInfo.facing, cameraInfo.sensorOrientation, orientation.rotationDeg, h, v, profile.video.levelHorizon)
             .also { st -> sensors.gyroSink = { t, x, y, z -> st.onGyro(t, x, y, z) } }
@@ -144,7 +152,7 @@ class StreamPipeline(
         )
     } else null
 
-    private val camera = CameraSource(context, cameraInfo, profile.video, onFatalError)
+    private val camera = CameraSource(context, cameraInfo, video, onFatalError)
 
     private val audio = if (profile.audio.enabled) {
         AudioEncoder(profile.audio) { captureUs, adts -> muxer.writeAudio(captureUs, adts, SensorHub.nowUs()) }
@@ -161,7 +169,7 @@ class StreamPipeline(
             val mapping = stabilizer?.let { st ->
                 { timestampNs: Long ->
                     val captureUs = camera.toCaptureUs(timestampNs / 1000)
-                    st.frame(captureUs, sensors.poseAt(captureUs, cameraInfo.facing, cameraInfo.sensorOrientation)).homography
+                    st.frame(captureUs, sensors.poseAt(captureUs, cameraInfo.facing, cameraInfo.sensorOrientation), camera.exposureMidUs).homography
                 }
             }
             FrameRenderer(

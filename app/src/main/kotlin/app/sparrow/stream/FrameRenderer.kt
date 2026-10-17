@@ -194,7 +194,11 @@ class FrameRenderer(
 
         const val FRAGMENT = """
             #extension GL_OES_EGL_image_external : require
+            #ifdef GL_FRAGMENT_PRECISION_HIGH
             precision highp float;
+            #else
+            precision mediump float;
+            #endif
             uniform samplerExternalOES sTexture;
             uniform mat3 uMap;
             uniform mat4 uSt;

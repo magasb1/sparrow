@@ -42,6 +42,8 @@ data class CameraInfo(
     val realtimeTimestamps: Boolean,
     val encoderSizes: List<Size>,
     val previewSizes: List<Size>,
+    /** LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION modes. */
+    val oisModes: List<Int>,
     val fpsRanges: List<Range<Int>>,
     val label: String,
 ) {
@@ -89,6 +91,7 @@ data class CameraInfo(
                     CameraMetadata.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME,
                 encoderSizes = map.getOutputSizes(MediaCodec::class.java)?.toList().orEmpty(),
                 previewSizes = map.getOutputSizes(SurfaceHolder::class.java)?.toList().orEmpty(),
+                oisModes = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)?.toList().orEmpty(),
                 fpsRanges = c.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList().orEmpty(),
                 label = "${facing.name.lowercase().replaceFirstChar { it.uppercase() }} camera $id " +
                     "(%.1f mm, %.0f° HFOV)".format(focal, FrameGeometry.fieldOfView(activeWmm, focal.toDouble())),
@@ -135,6 +138,18 @@ class CameraSource(
 
     /** elapsedRealtime − monotonic clock, for devices whose camera uses CLOCK_MONOTONIC. */
     private val monotonicOffsetUs = (SystemClock.elapsedRealtimeNanos() - System.nanoTime()) / 1000
+
+    /** Half the exposure plus half the rolling-shutter readout of recent frames, µs. */
+    @Volatile var exposureMidUs: Long = 0
+        private set
+
+    private val resultCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: android.hardware.camera2.TotalCaptureResult) {
+            val exposure = result.get(android.hardware.camera2.CaptureResult.SENSOR_EXPOSURE_TIME) ?: return
+            val skew = result.get(android.hardware.camera2.CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW) ?: 0L
+            exposureMidUs = (exposure + skew) / 2000
+        }
+    }
 
     fun toCaptureUs(cameraUs: Long): Long = if (realtimeBase) cameraUs else cameraUs + monotonicOffsetUs
 
@@ -196,7 +211,7 @@ class CameraSource(
     fun setZoom(ratio: Double) {
         handler.post {
             zoomRatio = ratio.coerceIn(info.zoomRange)
-            session?.let { runCatching { it.setRepeatingRequest(buildRequest(it.device), null, handler) } }
+            session?.let { runCatching { it.setRepeatingRequest(buildRequest(it.device), resultCallback, handler) } }
         }
     }
 
@@ -217,7 +232,7 @@ class CameraSource(
                     s.close(); return
                 }
                 session = s
-                runCatching { s.setRepeatingRequest(buildRequest(camera, targets), null, handler) }
+                runCatching { s.setRepeatingRequest(buildRequest(camera, targets), resultCallback, handler) }
                     .onFailure { AppLog.e("Could not start capture", it) }
             }
 
@@ -260,6 +275,10 @@ class CameraSource(
                 if (settings.stabilizationMode == StabilizationMode.CAMERA) CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
                 else CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF,
             )
+            if (settings.stabilizationMode == StabilizationMode.GYRO && OIS_OFF in info.oisModes) {
+                // The lens would cancel shake before the gyro correction does it a second time.
+                set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, OIS_OFF)
+            }
             if (Build.VERSION.SDK_INT >= 30) {
                 set(CaptureRequest.CONTROL_ZOOM_RATIO, zoomRatio.toFloat())
             } else if (zoomRatio > 1.0) {
@@ -299,5 +318,9 @@ class CameraSource(
         }
         if (Thread.currentThread() != thread) deviceClosed.await(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
         thread.quitSafely()
+    }
+
+    private companion object {
+        const val OIS_OFF = CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_OFF
     }
 }

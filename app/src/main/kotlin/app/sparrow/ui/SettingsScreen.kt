@@ -145,7 +145,7 @@ fun SettingsScreen(profiles: ProfileRepository, onBack: () -> Unit) {
                 if (p.video.stabilizationMode == StabilizationMode.GYRO) {
                     SwitchRow(
                         "Level horizon", p.video.levelHorizon, { p = p.copy(video = p.video.copy(levelHorizon = it)) },
-                        supporting = "Keeps the horizon level in the stream however the phone is tilted. Crops 20 % instead of 10 %.",
+                        supporting = "Keeps the horizon level for tilts up to about 6°; larger tilts are partly corrected. Crops 25 % instead of 10 %.",
                     )
                 }
             }

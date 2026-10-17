@@ -39,7 +39,8 @@ class Stabilizer(
     private val horizontalFovDeg: Double,
     private val verticalFovDeg: Double,
     private val level: Boolean,
-    val cropScale: Double = if (level) 1.2 else 1.1,
+    /** 1.25 with levelling holds a tilt of about 6° plus normal shake (a roll α needs cos α + 16/9 sin α). */
+    val cropScale: Double = if (level) 1.25 else 1.1,
     private val smoothingS: Double = 0.5,
 ) {
     private val axes = CameraPose.cameraAxesInDevice(facing, sensorOrientationDeg)
@@ -49,6 +50,7 @@ class Stabilizer(
     private var count = 0
     private var orientation = Quat.IDENTITY
     private var lastGyroUs = Long.MIN_VALUE
+    private var lastRate = Vec3(0.0, 0.0, 0.0)
 
     private var smooth: Quat? = null
     private var lastFrameUs = Long.MIN_VALUE
@@ -74,6 +76,7 @@ class Stabilizer(
                 val w = Vec3(wx.toDouble(), wy.toDouble(), wz.toDouble())
                 val wCam = Vec3(w dot axes.x, w dot axes.y, w dot axes.z)
                 orientation = (orientation * Quat.fromRate(wCam, dt)).normalized()
+                lastRate = wCam
             }
         }
         lastGyroUs = timeUs
@@ -95,7 +98,11 @@ class Stabilizer(
             }
         }
         return when {
-            newer == -1 -> orientations[older]!! // frame is newer than all samples: hold the latest
+            // Frame newer than all samples (gyro delivery lags): extrapolate with the last rate.
+            newer == -1 -> {
+                val dt = ((timeUs - times[older]) / 1e6).coerceIn(0.0, 0.05)
+                (orientations[older]!! * Quat.fromRate(lastRate, dt)).normalized()
+            }
             older == -1 -> orientations[newer]!!
             else -> {
                 val span = (times[newer] - times[older]).toDouble()
@@ -105,26 +112,31 @@ class Stabilizer(
     }
 
     /**
-     * Transform for the frame captured at [timeUs]. Call once per frame, in order.
-     * [sensorPose] (the real camera's pose in sensor-image orientation) is needed for levelling.
+     * Transform for the frame captured at [timeUs] (start of exposure, the camera timestamp).
+     * Call once per frame, in order. [sensorPose] (the real camera's pose in sensor-image
+     * orientation) is needed for levelling; [exposureMidUs] is half the exposure plus half the
+     * rolling-shutter readout.
      */
     @Synchronized
-    fun frame(timeUs: Long, sensorPose: CameraPose?): FrameTransform {
-        val raw = orientationAt(timeUs)
+    fun frame(timeUs: Long, sensorPose: CameraPose?, exposureMidUs: Long = 0): FrameTransform {
+        // Orientation at the middle of exposure and readout, where the image "is" on average.
+        val raw = orientationAt(timeUs + exposureMidUs)
         val previous = smooth
         var s = if (previous == null || lastFrameUs == Long.MIN_VALUE) raw else {
             val dt = ((timeUs - lastFrameUs) / 1e6).coerceIn(0.0, 0.5)
             Quat.slerp(previous, raw, 1 - exp(-dt / smoothingS))
         }
         lastFrameUs = timeUs
-        var c = raw.conjugate() * s
-        if (level && sensorPose != null) c = c * levelRoll(c, sensorPose)
-        val fitted = fit(c)
-        if (fitted != c) {
+        // Stabilisation first: fitted on its own so the filter state only follows its own clipping.
+        val stab = raw.conjugate() * s
+        val stabFitted = fit(stab)
+        if (stabFitted != stab) {
             // Let the virtual camera follow: the next frames start from what was shown.
-            s = raw * fitted
+            s = raw * stabFitted
         }
         smooth = s
+        // Then as much levelling roll as the remaining crop allows.
+        val fitted = if (level && sensorPose != null) fitRoll(stabFitted, levelRoll(stabFitted, sensorPose)) else stabFitted
         applied[appliedHead] = timeUs to fitted
         appliedHead = (appliedHead + 1) % applied.size
         return FrameTransform(fitted, homography(fitted), cropScale)
@@ -146,6 +158,19 @@ class Stabilizer(
         val r = Math.toRadians(rotationDeg.toDouble())
         val beta = atan2(u.y, u.x) - atan2(-cos(r), -sin(r))
         return Quat.axisAngle(Vec3.Z, beta)
+    }
+
+    /** [base] plus the largest part of [roll] that keeps the output inside the source image. */
+    private fun fitRoll(base: Quat, roll: Quat): Quat {
+        val full = base * roll
+        if (inside(full)) return full
+        var lo = 0.0
+        var hi = 1.0
+        repeat(10) {
+            val mid = (lo + hi) / 2
+            if (inside(base * Quat.slerp(Quat.IDENTITY, roll, mid))) lo = mid else hi = mid
+        }
+        return base * Quat.slerp(Quat.IDENTITY, roll, lo)
     }
 
     /** Largest part of [c] (towards identity) that keeps the output inside the source image. */

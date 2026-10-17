@@ -49,7 +49,8 @@ object Vmti {
     private val FOV = Imapb(0.0, 180.0, 2)
     val LATITUDE = Imapb(-90.0, 90.0, 4)
     val LONGITUDE = Imapb(-180.0, 180.0, 4)
-    val HAE = Imapb(-900.0, 19000.0, 3)
+    /** ST 0903 Location pack: lat 4 + lon 4 + HAE 2 bytes (10 bytes without sigma/rho). */
+    val HAE = Imapb(-900.0, 19000.0, 2)
 
     /** ST 0903 pixel number: column + (row − 1) × width, both 1-based. */
     fun pixelNumber(x: Int, y: Int, width: Int): Long = (x + 1).toLong() + y.toLong() * width

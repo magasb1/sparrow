@@ -40,8 +40,12 @@ class DetectionEngine(
     private val toCaptureUs: (Long) -> Long,
     private val onResults: (DetectionStats) -> Unit,
 ) {
-    private val thread = HandlerThread("detector").apply { start() }
+    // Frames are taken and returned on one thread and analysed on another, so a slow inference
+    // never holds camera buffers (which would stall the encoder and preview too).
+    private val thread = HandlerThread("analysis-frames").apply { start() }
     private val handler = Handler(thread.looper)
+    private val inference = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "detector") }
+    @Volatile private var busy = false
     private val reader = ImageReader.newInstance(analysisSize.width, analysisSize.height, ImageFormat.YUV_420_888, 2)
     val tracker = Tracker()
 
@@ -49,6 +53,9 @@ class DetectionEngine(
     private var session: OrtSession? = null
     private var loadFailed = false
     private val input = FloatArray(3 * RfDetr.INPUT_SIZE * RfDetr.INPUT_SIZE)
+    /** Reused native input buffer; a heap buffer would make ONNX Runtime allocate 1.7 MB per run. */
+    private val tensorBuffer: FloatBuffer = java.nio.ByteBuffer.allocateDirect(4 * input.size)
+        .order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer()
     private var frame: YuvFrame? = null
     private val intervalMs = (1000 / settings.rateHz).toLong()
     private var lastRunMs = 0L
@@ -56,6 +63,11 @@ class DetectionEngine(
     private var runs = 0
 
     @Volatile var enabled = false
+        set(value) {
+            field = value
+            // Cleared on the detector thread so an inference in flight cannot bring tracks back.
+            if (!value) runCatching { inference.execute { tracker.clear() } }
+        }
 
     val surface: Surface get() = reader.surface
 
@@ -66,16 +78,25 @@ class DetectionEngine(
     private fun onImage(r: ImageReader) {
         val image = runCatching { r.acquireLatestImage() }.getOrNull() ?: return
         val captureUs: Long
+        val f: YuvFrame
         try {
             val now = SystemClock.elapsedRealtime()
-            if (!enabled || loadFailed || now - lastRunMs < intervalMs) return
+            if (!enabled || loadFailed || busy || now - lastRunMs < intervalMs) return
             lastRunMs = now
             captureUs = toCaptureUs(image.timestamp / 1000)
-            frame = copy(image, frame)
+            // Safe to reuse: the previous inference has finished reading it (busy is false).
+            f = copy(image, frame).also { frame = it }
         } finally {
             image.close()
         }
-        detect(frame!!, captureUs)
+        busy = true
+        inference.execute {
+            try {
+                detect(f, captureUs)
+            } finally {
+                busy = false
+            }
+        }
     }
 
     private fun detect(f: YuvFrame, captureUs: Long) {
@@ -83,13 +104,16 @@ class DetectionEngine(
         val t0 = SystemClock.elapsedRealtime()
         try {
             RfDetr.preprocess(f, rotationDeg, input)
+            tensorBuffer.clear()
+            tensorBuffer.put(input)
+            tensorBuffer.flip()
             val n = RfDetr.INPUT_SIZE.toLong()
-            OnnxTensor.createTensor(env, FloatBuffer.wrap(input), longArrayOf(1, 3, n, n)).use { tensor ->
+            OnnxTensor.createTensor(env, tensorBuffer, longArrayOf(1, 3, n, n)).use { tensor ->
                 s.run(mapOf(RfDetr.INPUT_NAME to tensor)).use { out ->
                     val boxes = (out.get(RfDetr.BOXES_OUTPUT).get() as OnnxTensor).floatBuffer.toArray()
                     val logits = (out.get(RfDetr.LOGITS_OUTPUT).get() as OnnxTensor).floatBuffer.toArray()
                     val detections = RfDetr.postprocess(boxes, logits, settings.minConfidence.toFloat(), settings.classes)
-                    tracker.update(detections, captureUs)
+                    if (enabled) tracker.update(detections, captureUs)
                 }
             }
         } catch (e: Exception) {
@@ -160,12 +184,13 @@ class DetectionEngine(
 
     fun release() {
         enabled = false
-        handler.post {
+        handler.post { reader.close() }
+        thread.quitSafely()
+        inference.execute {
             runCatching { session?.close() }
             session = null
-            reader.close()
         }
-        thread.quitSafely()
+        inference.shutdown()
     }
 
     private fun FloatBuffer.toArray(): FloatArray = FloatArray(remaining()).also { get(it) }

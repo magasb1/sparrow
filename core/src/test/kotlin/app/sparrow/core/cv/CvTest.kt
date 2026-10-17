@@ -31,11 +31,11 @@ class VmtiTest {
         for (v in listOf(-90.0, -45.123456, 0.0, 12.3456789, 59.9138688, 90.0)) {
             assertEquals(v, lat.decode(lat.encode(v)), lat.step)
         }
-        val hae = Imapb(-900.0, 19000.0, 3)
+        val hae = Vmti.HAE
         assertEquals(123.4, hae.decode(hae.encode(123.4)), hae.step)
         assertEquals(19000.0, hae.decode(hae.encode(25000.0)), hae.step)
         // The value range stays below the reserved upper half of the integer space.
-        assertTrue(hae.encode(19000.0) < (1L shl 23))
+        assertTrue(hae.encode(19000.0) < (1L shl 15))
     }
 
     @Test
@@ -57,7 +57,7 @@ class VmtiTest {
         assertEquals("person", p.className)
         assertEquals(59.914, p.location!!.lat, 1e-6)
         assertEquals(10.7538, p.location!!.lon, 1e-6)
-        assertEquals(52.0, p.locationHae!!, 0.01)
+        assertEquals(52.0, p.locationHae!!, Vmti.HAE.step)
         assertEquals(300, back.targets[1].id) // multi-byte BER-OID id
         assertNull(back.targets[1].location)
     }

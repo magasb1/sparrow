@@ -42,6 +42,8 @@ data class StreamStatus(
     val displayRotationDeg: Int? = null,
     /** Detector figures while detection runs; null when it is off. */
     val detection: app.sparrow.cv.DetectionStats? = null,
+    /** This camera cannot run the extra analysis stream, so detection is off for the session. */
+    val detectionUnavailable: Boolean = false,
 )
 
 data class PreviewTarget(val surface: Surface, val width: Int, val height: Int)

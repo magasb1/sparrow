@@ -61,11 +61,22 @@ object RfDetr {
      * Maps a normalised point of the (rotated) stream image back to the sensor image.
      * [rotationDeg] is the clockwise rotation applied to the sensor image to make the stream.
      */
-    fun sensorPoint(s: Float, t: Float, rotationDeg: Int): Pair<Float, Float> = when (rotationDeg) {
-        90 -> t to 1f - s
-        180 -> 1f - s to 1f - t
-        270 -> 1f - t to s
-        else -> s to t
+    fun sensorPoint(s: Float, t: Float, rotationDeg: Int): Pair<Float, Float> = sensorX(s, t, rotationDeg) to sensorY(s, t, rotationDeg)
+
+    @Suppress("NOTHING_TO_INLINE")
+    private inline fun sensorX(s: Float, t: Float, rotationDeg: Int): Float = when (rotationDeg) {
+        90 -> t
+        180 -> 1f - s
+        270 -> 1f - t
+        else -> s
+    }
+
+    @Suppress("NOTHING_TO_INLINE")
+    private inline fun sensorY(s: Float, t: Float, rotationDeg: Int): Float = when (rotationDeg) {
+        90 -> 1f - s
+        180 -> 1f - t
+        270 -> s
+        else -> t
     }
 
     /**
@@ -79,7 +90,9 @@ object RfDetr {
             val t = (row + 0.5f) / n
             for (col in 0 until n) {
                 val s = (col + 0.5f) / n
-                val (sx, sy) = sensorPoint(s, t, rotationDeg)
+                // Inlined sensorPoint: this loop runs 147k times per inference.
+                val sx = sensorX(s, t, rotationDeg)
+                val sy = sensorY(s, t, rotationDeg)
                 val fx = sx * frame.width - 0.5f
                 val fy = sy * frame.height - 0.5f
                 val luma = bilinear(frame, fx, fy)
@@ -106,7 +119,10 @@ object RfDetr {
         val plane = n * n
         for (row in 0 until n) {
             for (col in 0 until n) {
-                val (sx, sy) = sensorPoint((col + 0.5f) / n, (row + 0.5f) / n, rotationDeg)
+                val s = (col + 0.5f) / n
+                val t = (row + 0.5f) / n
+                val sx = sensorX(s, t, rotationDeg)
+                val sy = sensorY(s, t, rotationDeg)
                 val fx = sx * width - 0.5f
                 val fy = sy * height - 0.5f
                 val i = row * n + col

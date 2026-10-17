@@ -18,3 +18,9 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
 }
+
+tasks.test {
+    // FfmpegInteropTest reads these; declare them so a change re-runs the tests.
+    inputs.property("ffmpegHome", providers.environmentVariable("FFMPEG_HOME").orElse(""))
+    inputs.property("ffmpegMajor", providers.environmentVariable("FFMPEG_MAJOR").orElse(""))
+}

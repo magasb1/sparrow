@@ -15,9 +15,19 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Feeds FFmpeg-encoded H.264 through the muxer and checks that FFmpeg's own demuxer finds the
- * video and KLV streams and decodes both cleanly. Skipped when ffmpeg is not installed.
+ * video and KLV streams and decodes both cleanly.
+ *
+ * Runs against FFmpeg 7 (major version from FFMPEG_MAJOR, default 7). Set FFMPEG_HOME to the
+ * directory holding ffmpeg and ffprobe, otherwise PATH is used. Skipped when that FFmpeg is absent.
  */
 class FfmpegInteropTest {
+    private val home: String? = System.getenv("FFMPEG_HOME")
+    private val requiredMajor = System.getenv("FFMPEG_MAJOR")?.toIntOrNull() ?: 7
+    private val ffmpeg = tool("ffmpeg")
+    private val ffprobe = tool("ffprobe")
+
+    private fun tool(name: String) = home?.let { File(it, name).path } ?: name
+
     private fun exec(vararg cmd: String): String {
         val p = ProcessBuilder(*cmd).redirectErrorStream(true).start()
         val out = p.inputStream.bufferedReader().readText()
@@ -25,8 +35,13 @@ class FfmpegInteropTest {
         return out
     }
 
-    private fun available(tool: String) =
-        runCatching { ProcessBuilder(tool, "-version").start().waitFor() == 0 }.getOrDefault(false)
+    /** Major version of [tool], or null if it cannot be run. */
+    private fun majorVersion(tool: String): Int? = runCatching {
+        val p = ProcessBuilder(tool, "-version").redirectErrorStream(true).start()
+        val first = p.inputStream.bufferedReader().readLine().orEmpty()
+        p.waitFor()
+        Regex("version n?(\\d+)\\.").find(first)?.groupValues?.get(1)?.toInt()
+    }.getOrNull()
 
     @Test
     fun `ffmpeg demuxes video and sync KLV`() = roundTrip(KlvCarriage.SYNC)
@@ -35,11 +50,12 @@ class FfmpegInteropTest {
     fun `ffmpeg demuxes video and async KLV`() = roundTrip(KlvCarriage.ASYNC)
 
     private fun roundTrip(carriage: KlvCarriage) {
-        assumeTrue(available("ffmpeg") && available("ffprobe"))
+        val major = majorVersion(ffmpeg)
+        assumeTrue("needs FFmpeg $requiredMajor (found ${major ?: "none"})", major == requiredMajor && majorVersion(ffprobe) == requiredMajor)
         val dir = createTempDir()
         val h264 = File(dir, "in.h264")
         exec(
-            "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30", "-t", "4",
+            ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30", "-t", "4",
             "-c:v", "libx264", "-bf", "0", "-g", "30", "-pix_fmt", "yuv420p", "-f", "h264", "-y", h264.path,
         )
 
@@ -70,28 +86,24 @@ class FfmpegInteropTest {
         muxer.flush()
         out.close()
 
-        val probe = exec("ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name", "-of", "csv=p=0", ts.path)
+        val probe = exec(ffprobe, "-v", "error", "-show_entries", "stream=codec_type,codec_name", "-of", "csv=p=0", ts.path)
         assertTrue(probe, probe.lines().any { it.startsWith("h264,video") })
         assertTrue(probe, probe.lines().any { it.startsWith("klv,data") })
 
         // Video decodes without errors.
-        val decodeLog = exec("ffmpeg", "-v", "error", "-i", ts.path, "-map", "0:v", "-f", "null", "-")
+        val decodeLog = exec(ffmpeg, "-v", "error", "-i", ts.path, "-map", "0:v", "-f", "null", "-")
         assertEquals("", decodeLog.trim())
 
         // KLV comes back byte-exact and valid.
         val klvFile = File(dir, "out.klv")
-        exec("ffmpeg", "-v", "error", "-i", ts.path, "-map", "0:d", "-c", "copy", "-f", "data", "-y", klvFile.path)
-        // FFmpeg <= 6.1 strips a 5-byte metadata AU header from every KLV stream, even async
-        // ones that carry none (libavformat/mpegts.c); put the lost key bytes back.
-        val dropped = if (carriage == KlvCarriage.ASYNC) 5 else 0
+        exec(ffmpeg, "-v", "error", "-i", ts.path, "-map", "0:d", "-c", "copy", "-f", "data", "-y", klvFile.path)
         val klv = klvFile.readBytes()
         var pos = 0
         var count = 0
         while (pos < klv.size) {
-            val (len, lb) = Ber.readLength(klv, pos + St0601.UNIVERSAL_KEY.size - dropped)
-            val end = pos + St0601.UNIVERSAL_KEY.size - dropped + lb + len
-            val packet = St0601.UNIVERSAL_KEY.copyOf(dropped) + klv.copyOfRange(pos, end)
-            val decoded = St0601Decoder.decode(packet)
+            val (len, lb) = Ber.readLength(klv, pos + St0601.UNIVERSAL_KEY.size)
+            val end = pos + St0601.UNIVERSAL_KEY.size + lb + len
+            val decoded = St0601Decoder.decode(klv.copyOfRange(pos, end))
             assertTrue(decoded.checksumValid)
             assertTrue(decoded.has(Tag.SENSOR_LATITUDE))
             pos = end

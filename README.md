@@ -29,14 +29,24 @@ taken on video frames, so each KLV PTS equals the PTS of the frame it describes.
 Requirements: JDK 17+ and the Android SDK (platform 37). Gradle is provided by the wrapper.
 
 ```sh
-./gradlew :core:test          # unit tests, including FFmpeg interop if ffmpeg is installed
+./gradlew :core:test          # unit tests, including FFmpeg 7 interop when available
 ./gradlew :app:assembleDebug  # app/build/outputs/apk/debug/app-debug.apk
 ./gradlew :app:lintDebug
 ```
 
 The interop test (`FfmpegInteropTest`) muxes FFmpeg-encoded H.264 with KLV and checks that
 `ffprobe` sees an `h264` video and a `klv` data stream, that the video decodes cleanly, and that
-the KLV comes back byte-exact with valid checksums. It is skipped when `ffmpeg` is not on `PATH`.
+the KLV comes back byte-exact with valid checksums, for both sync and async carriage.
+
+It runs against **FFmpeg 7** (with libx264). Point `FFMPEG_HOME` at the directory that holds
+`ffmpeg` and `ffprobe`, otherwise `PATH` is used; the test is skipped when that FFmpeg is not
+major version 7 (override with `FFMPEG_MAJOR`). A static 7.0.2 build works:
+
+```sh
+curl -LO https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+tar xf ffmpeg-release-amd64-static.tar.xz
+FFMPEG_HOME=$PWD/ffmpeg-7.0.2-amd64-static ./gradlew :core:test
+```
 
 ## Receiving the stream
 
@@ -85,9 +95,9 @@ Known gaps and notes:
 
 * The ST 0601 example values in `St0601Test` were reproduced from memory of the standard's tag
   tables; check them against the MISB document before relying on them for acceptance.
-* FFmpeg 6.1's demuxer strips a 5-byte metadata AU header from every KLV stream, including
-  asynchronous ones that carry none, so async KLV loses its first 5 bytes in FFmpeg-based
-  receivers. Synchronous carriage (the default) is unaffected.
+* Receivers built on FFmpeg 6.x strip a 5-byte metadata AU header from every KLV stream,
+  including asynchronous ones that carry none, so async KLV loses its first 5 bytes there.
+  FFmpeg 7 fixed this; synchronous carriage (the default) works with both.
 * The FOV ignores the small crop added by electronic stabilisation.
 * SRT data produced while the link is down is dropped, not buffered.
 

@@ -122,7 +122,7 @@ fun MainScreen(
 
             ProfilePicker(profiles, enabled = !status.running)
             Text(
-                SrtUrl.format(active.destination) + if (active.destination.passphrase.isNotEmpty()) "  · encrypted" else "",
+                java.net.URLDecoder.decode(SrtUrl.format(active.destination), "UTF-8") + if (active.destination.passphrase.isNotEmpty()) "  · encrypted" else "",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -131,7 +131,7 @@ fun MainScreen(
                 Button(
                     onClick = onStop,
                     modifier = Modifier.fillMaxWidth().height(56.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = LiveRed),
+                    colors = ButtonDefaults.buttonColors(containerColor = LiveRed, contentColor = Color.White),
                 ) { Text("Stop", style = MaterialTheme.typography.titleMedium) }
             } else {
                 Button(onClick = onStart, modifier = Modifier.fillMaxWidth().height(56.dp)) {

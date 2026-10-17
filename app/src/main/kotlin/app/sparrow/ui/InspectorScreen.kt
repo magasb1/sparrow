@@ -61,9 +61,12 @@ fun InspectorScreen(onBack: () -> Unit) {
                     Row(Modifier.fillMaxWidth()) {
                         Text("${item.tagId}", Modifier.width(36.dp), fontFamily = FontFamily.Monospace)
                         Text(item.tag?.label ?: "Unknown", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                        val value = if (item.tag == Tag.PRECISION_TIME_STAMP) {
-                            (item.value as? Long)?.let { Instant.ofEpochSecond(it / 1_000_000, (it % 1_000_000) * 1000).toString() }
-                        } else item.display
+                        val value = when (item.tag) {
+                            Tag.PRECISION_TIME_STAMP ->
+                                (item.value as? Long)?.let { Instant.ofEpochSecond(it / 1_000_000, (it % 1_000_000) * 1000).toString() }
+                            Tag.CHECKSUM -> (item.value as? Long)?.let { "0x%04X".format(it) }
+                            else -> item.display
+                        }
                         Text(value ?: "", Modifier.weight(1.2f), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
                     }
                 }

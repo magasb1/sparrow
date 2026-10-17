@@ -6,6 +6,24 @@ STANAG 4609 MPEG-TS. It keeps streaming in the background and with the screen of
 The requirements are in the *Sparrow – Product Description & SRS* document; requirement IDs
 (VID-1, KLV-3, …) are referenced in the code.
 
+## Screenshots
+
+Rendered on the JVM from the real Compose screens with sample data (the camera preview is black
+off-device). Regenerate with `./gradlew :app:testDebugUnitTest`; the PNGs land in
+`docs/screenshots/`.
+
+| Main · idle | Main · live | Main · reconnecting, no GNSS fix |
+| --- | --- | --- |
+| <img src="docs/screenshots/02-main-idle.png" width="240"> | <img src="docs/screenshots/03-main-live.png" width="240"> | <img src="docs/screenshots/04-main-reconnecting.png" width="240"> |
+
+| First-run guide | Profiles | Log |
+| --- | --- | --- |
+| <img src="docs/screenshots/01-onboarding.png" width="240"> | <img src="docs/screenshots/06-profiles.png" width="240"> | <img src="docs/screenshots/08-log.png" width="240"> |
+
+| KLV inspector | Settings (full length) |
+| --- | --- |
+| <img src="docs/screenshots/07-klv-inspector.png" width="240"> | <img src="docs/screenshots/05-settings.png" width="240"> |
+
 ## Layout
 
 | Module | What it holds |

@@ -82,7 +82,7 @@ fun ProfilesScreen(profiles: ProfileRepository, onBack: () -> Unit) {
                         RadioButton(selected = p.id == activeId, onClick = { profiles.select(p.id) }, enabled = !running)
                         Column(Modifier.weight(1f)) {
                             Text(p.name, fontWeight = FontWeight.SemiBold)
-                            Text(SrtUrl.format(p.destination), style = MaterialTheme.typography.bodySmall)
+                            Text(java.net.URLDecoder.decode(SrtUrl.format(p.destination), "UTF-8"), style = MaterialTheme.typography.bodySmall)
                         }
                         IconButton(onClick = { renaming = p }) { Icon(Icons.Default.Edit, "Rename") }
                         IconButton(onClick = {

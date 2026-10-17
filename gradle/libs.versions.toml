@@ -10,6 +10,9 @@ coreKtx = "1.17.0"
 srtdroid = "1.10.1"
 zxing = "3.5.4"
 junit = "4.13.2"
+robolectric = "4.17"
+roborazzi = "1.76.0"
+composeUiTest = "1.12.1"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -29,6 +32,12 @@ compose-material-icons = { module = "androidx.compose.material:material-icons-ex
 srtdroid-core = { module = "io.github.thibaultbee.srtdroid:srtdroid-core", version.ref = "srtdroid" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 junit = { module = "junit:junit", version.ref = "junit" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+robolectric-android-all = { module = "org.robolectric:android-all-instrumented", version = "15-robolectric-13954326-i7" }
+roborazzi = { module = "io.github.takahirom.roborazzi:roborazzi", version.ref = "roborazzi" }
+roborazzi-compose = { module = "io.github.takahirom.roborazzi:roborazzi-compose", version.ref = "roborazzi" }
+compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4", version.ref = "composeUiTest" }
+compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest", version.ref = "composeUiTest" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -37,7 +37,30 @@ data class CameraPose(val forward: Vec3, val up: Vec3) {
             return Math.toDegrees(atan2(up dot horizontalRight, up dot levelUp))
         }
 
+    /**
+     * Pose of a virtual camera rotated by [correction] relative to this one (both in this pose's
+     * image frame: x right, y down, z forward), e.g. after stabilisation.
+     */
+    fun corrected(correction: app.sparrow.core.stab.Quat): CameraPose {
+        fun toWorld(v: Vec3) = right * v.x - up * v.y + forward * v.z
+        return CameraPose(toWorld(correction.rotate(Vec3.Z)).normalized(), (-toWorld(correction.rotate(Vec3.Y))).normalized())
+    }
+
+    /** The same camera with its image turned clockwise by [degrees] (sensor → stream image). */
+    fun rotatedImage(degrees: Int): CameraPose {
+        val r = Math.toRadians(degrees.toDouble())
+        return CameraPose(forward, (up * cos(r) - right * sin(r)).normalized())
+    }
+
+    /** Image axes (x right, y down, z forward) in device coordinates. */
+    data class Axes(val x: Vec3, val y: Vec3, val z: Vec3)
+
     companion object {
+        fun cameraAxesInDevice(facing: LensFacing, sensorOrientationDeg: Int): Axes {
+            val p = fromDevice(Mat3.IDENTITY, facing, sensorOrientationDeg)
+            return Axes(p.right, -p.up, p.forward)
+        }
+
         /**
          * Builds the pose from the device rotation matrix (device → ENU, from the rotation vector
          * sensor, corrected to true north) and the Camera2 characteristics of the lens.

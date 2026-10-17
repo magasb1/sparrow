@@ -53,6 +53,17 @@ class SensorHub(private val context: Context) {
     private var poseIndex = 0
     private val rotation = FloatArray(9)
 
+    /** Receives raw gyroscope samples (capture-clock µs, rad/s in device axes) for stabilisation. */
+    @Volatile var gyroSink: ((Long, Float, Float, Float) -> Unit)? = null
+
+    private val gyroListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            gyroSink?.invoke(event.timestamp / 1000, event.values[0], event.values[1], event.values[2])
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
+    }
+
     private val sensorListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
             SensorManager.getRotationMatrixFromVector(rotation, event.values)
@@ -80,6 +91,12 @@ class SensorHub(private val context: Context) {
         } else {
             sensorManager.registerListener(sensorListener, rotationSensor, 20_000, handler)
         }
+        if (gyroSink != null) {
+            sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let {
+                // 200 Hz: several samples per frame for interpolation at the exposure time.
+                sensorManager.registerListener(gyroListener, it, 5_000, handler)
+            } ?: AppLog.w("No gyroscope: gyro stabilisation unavailable")
+        }
         runCatching {
             locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 500L, 0f, locationListener, thread.looper)
             locationManager.addNmeaListener(nmeaListener, handler)
@@ -89,6 +106,7 @@ class SensorHub(private val context: Context) {
     fun stop() {
         if (!thread.isAlive) return
         sensorManager.unregisterListener(sensorListener)
+        sensorManager.unregisterListener(gyroListener)
         runCatching {
             locationManager.removeUpdates(locationListener)
             locationManager.removeNmeaListener(nmeaListener)

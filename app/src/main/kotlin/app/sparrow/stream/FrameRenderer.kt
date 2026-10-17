@@ -9,7 +9,6 @@ import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
-import android.opengl.Matrix
 import android.os.Handler
 import android.os.HandlerThread
 import android.view.Surface
@@ -21,19 +20,24 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * Rotates camera frames on the GPU into the encoder's input surface, so the stream is upright for
- * the orientation the phone was held in at Go live. Camera timestamps are passed through
- * unchanged, so the encoder output stays on the camera clock.
+ * Re-renders camera frames on the GPU into the encoder's input surface: turned upright for the
+ * orientation the phone was held in at Go live, and stabilised when [mapping] is given. Camera
+ * timestamps are passed through unchanged, so the encoder output stays on the camera clock.
  *
- * @param rotationDeg clockwise rotation applied to the sensor image: 90, 180 or 270
+ * Each output pixel (s, t) — normalised stream image coordinates, y down — samples the sensor
+ * image at H·(s, t, 1), where H is [mapping] for the frame's timestamp (row-major 3×3), or the
+ * plain stream rotation without it. Points outside the sensor image are black.
+ *
+ * @param rotationDeg clockwise rotation applied to the sensor image: 0, 90, 180 or 270
  */
-class RotatingRenderer(
+class FrameRenderer(
     private val output: Surface,
     private val inputWidth: Int,
     private val inputHeight: Int,
     private val rotationDeg: Int,
     private val outputWidth: Int,
     private val outputHeight: Int,
+    private val mapping: ((timestampNs: Long) -> DoubleArray)? = null,
 ) {
     private val thread = HandlerThread("gl-rotate").apply { start() }
     private val handler = Handler(thread.looper)
@@ -45,7 +49,8 @@ class RotatingRenderer(
     private var texture = 0
     private lateinit var surfaceTexture: SurfaceTexture
     private val stMatrix = FloatArray(16)
-    private val mvp = FloatArray(16)
+    private val map = FloatArray(9)
+    private val fixedMapping = app.sparrow.core.stab.Stabilizer.streamToSensor(rotationDeg)
 
     /** Surface the camera renders into. */
     lateinit var inputSurface: Surface
@@ -65,7 +70,7 @@ class RotatingRenderer(
         ready.await(3, TimeUnit.SECONDS)
         failure?.let {
             release()
-            throw IllegalStateException("GPU rotation unavailable", it)
+            throw IllegalStateException("GPU stage unavailable", it)
         }
     }
 
@@ -96,15 +101,12 @@ class RotatingRenderer(
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
 
-        // A positive GL angle turns the picture counter-clockwise; we want clockwise.
-        Matrix.setRotateM(mvp, 0, -rotationDeg.toFloat(), 0f, 0f, 1f)
-
         surfaceTexture = SurfaceTexture(texture).apply {
             setDefaultBufferSize(inputWidth, inputHeight)
             setOnFrameAvailableListener({ draw() }, handler)
         }
         inputSurface = Surface(surfaceTexture)
-        AppLog.i("GPU rotation $rotationDeg°: ${inputWidth}x$inputHeight → ${outputWidth}x$outputHeight")
+        AppLog.i("GPU stage: rotation $rotationDeg°${if (mapping != null) " + stabilisation" else ""}, ${inputWidth}x$inputHeight → ${outputWidth}x$outputHeight")
     }
 
     private fun draw() {
@@ -118,7 +120,10 @@ class RotatingRenderer(
             GLES20.glUseProgram(program)
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, texture)
-            GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(program, "uMvp"), 1, false, mvp, 0)
+            val h = mapping?.let { m -> runCatching { m(surfaceTexture.timestamp) }.getOrNull() } ?: fixedMapping
+            // GL wants column-major.
+            for (row in 0 until 3) for (col in 0 until 3) map[col * 3 + row] = h[row * 3 + col].toFloat()
+            GLES20.glUniformMatrix3fv(GLES20.glGetUniformLocation(program, "uMap"), 1, false, map, 0)
             GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(program, "uSt"), 1, false, stMatrix, 0)
             val pos = GLES20.glGetAttribLocation(program, "aPosition")
             val uv = GLES20.glGetAttribLocation(program, "aTexCoord")
@@ -130,7 +135,7 @@ class RotatingRenderer(
             EGLExt.eglPresentationTimeANDROID(display, surface, surfaceTexture.timestamp)
             EGL14.eglSwapBuffers(display, surface)
         } catch (e: RuntimeException) {
-            AppLog.w("GPU rotation frame dropped", e)
+            AppLog.w("GPU frame dropped", e)
         }
     }
 
@@ -175,25 +180,33 @@ class RotatingRenderer(
     private companion object {
         const val EGL_RECORDABLE_ANDROID = 0x3142
 
+        // vOut is the output point in image coordinates (y down); the fragment shader maps it into
+        // the sensor image and then through the SurfaceTexture transform (texture y is up).
         const val VERTEX = """
-            uniform mat4 uMvp;
-            uniform mat4 uSt;
             attribute vec4 aPosition;
             attribute vec4 aTexCoord;
-            varying vec2 vTexCoord;
+            varying vec2 vOut;
             void main() {
-                gl_Position = uMvp * aPosition;
-                vTexCoord = (uSt * aTexCoord).xy;
+                gl_Position = aPosition;
+                vOut = vec2(aTexCoord.x, 1.0 - aTexCoord.y);
             }
         """
 
         const val FRAGMENT = """
             #extension GL_OES_EGL_image_external : require
-            precision mediump float;
+            precision highp float;
             uniform samplerExternalOES sTexture;
-            varying vec2 vTexCoord;
+            uniform mat3 uMap;
+            uniform mat4 uSt;
+            varying vec2 vOut;
             void main() {
-                gl_FragColor = texture2D(sTexture, vTexCoord);
+                vec3 p = uMap * vec3(vOut, 1.0);
+                vec2 src = p.xy / p.z;
+                if (src.x < 0.0 || src.x > 1.0 || src.y < 0.0 || src.y > 1.0) {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                } else {
+                    gl_FragColor = texture2D(sTexture, (uSt * vec4(src.x, 1.0 - src.y, 0.0, 1.0)).xy);
+                }
             }
         """
 

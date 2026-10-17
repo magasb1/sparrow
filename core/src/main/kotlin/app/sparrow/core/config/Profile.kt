@@ -11,6 +11,9 @@ enum class SrtMode { CALLER, LISTENER }
 
 enum class FocusMode { CONTINUOUS, INFINITY }
 
+/** OFF; CAMERA = the device's own electronic stabilisation; GYRO = Sparrow's, with levelling. */
+enum class StabilizationMode { OFF, CAMERA, GYRO }
+
 /** Encoder rate control. VBR spends bits on motion and saves them on static scenes. */
 enum class RateControl { VBR, CBR }
 
@@ -43,7 +46,10 @@ data class VideoSettings(
     val rateControl: RateControl = RateControl.VBR,
     val zoomRatio: Double = 1.0,
     val focus: FocusMode = FocusMode.CONTINUOUS,
-    val stabilization: Boolean = true,
+    /** Replaces the earlier boolean `stabilization` key, which old profiles may still carry. */
+    val stabilizationMode: StabilizationMode = StabilizationMode.GYRO,
+    /** Keep the horizon level in the stream (GYRO only; crops 20 % instead of 10 %). */
+    val levelHorizon: Boolean = false,
 )
 
 @Serializable

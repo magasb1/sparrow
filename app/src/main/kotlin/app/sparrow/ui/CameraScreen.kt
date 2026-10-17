@@ -585,6 +585,14 @@ private fun StatsPanel(status: StreamStatus, profile: Profile) {
             },
             if (status.running && !status.gnss.hasFix) WarnAmber else Color.White,
         )
+        StatLine(
+            "Stabilisation",
+            when (profile.video.stabilizationMode) {
+                app.sparrow.core.config.StabilizationMode.OFF -> "Off"
+                app.sparrow.core.config.StabilizationMode.CAMERA -> "Camera"
+                app.sparrow.core.config.StabilizationMode.GYRO -> "Gyro" + if (profile.video.levelHorizon) " · horizon levelled" else ""
+            },
+        )
         StatLine("Metadata", "ST 0601.${profile.metadata.lsVersion} · ${"%.0f".format(profile.metadata.rateHz)} Hz · ${if (profile.metadata.carriage.name == "SYNC") "sync" else "async"}")
         status.recordingPath?.let { StatLine("Recording", it.substringAfterLast('/')) }
     }

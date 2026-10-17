@@ -114,6 +114,18 @@ above 15 fps. Choosing HEVC in Settings typically cuts another 30–40% at the s
 receivers support it. The SRS lists 30 fps / 4 Mbit/s / 1 s GOP as defaults; these were lowered on
 request.
 
+## Stabilisation
+
+| Mode | What it does |
+| --- | --- |
+| Gyro (default) | Sparrow integrates the gyroscope (200 Hz) and renders a steadied virtual camera on the GPU with a 10 % crop; fast pans pass through with a little lag. **Level horizon** also rolls the virtual camera so the horizon stays level (20 % crop). |
+| Camera | The device's own electronic stabilisation. |
+| Off | Raw camera frames. |
+
+In Gyro mode the KLV describes the virtual camera: attitude from the steadied orientation and FOV
+reduced by the crop, so frame center, corners and target positions match the streamed picture.
+The viewfinder still shows the camera's direct preview, not the stabilised stream.
+
 ## Metadata model
 
 A phone has no gimbal, so the platform frame is chosen to keep every angle exact and in range:
@@ -154,7 +166,7 @@ Known gaps and notes:
   including asynchronous ones that carry none, so async KLV loses its first 5 bytes there.
   FFmpeg 7 fixed this; synchronous carriage (the default) works with both.
 * The FOV ignores the small crop added by electronic stabilisation.
-* Portrait and reverse-landscape streams go through a GPU rotation stage (`RotatingRenderer`);
+* Portrait, reverse-landscape and gyro-stabilised streams go through a GPU stage (`FrameRenderer`);
   its direction and the matching KLV attitude are unit-tested as math only and need checking on
   a device.
 * SRT data produced while the link is down is dropped, not buffered.

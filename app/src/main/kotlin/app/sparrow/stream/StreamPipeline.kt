@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.Environment
 import android.util.Size
 import app.sparrow.core.config.Profile
+import app.sparrow.core.config.StabilizationMode
+import app.sparrow.core.stab.Stabilizer
 import app.sparrow.core.geo.LensFacing
 import app.sparrow.core.geo.StreamOrientation
 import app.sparrow.core.klv.ComposerSettings
@@ -56,7 +58,14 @@ class StreamPipeline(
         } else o
     }
     private val size = Size(orientation.width, orientation.height)
-    private var renderer: RotatingRenderer? = null
+    private var renderer: FrameRenderer? = null
+
+    /** Gyro stabilisation (and levelling); null unless the profile asks for it and there is a gyroscope. */
+    private val stabilizer: Stabilizer? = if (profile.video.stabilizationMode == StabilizationMode.GYRO) {
+        val (h, v) = cameraInfo.fieldOfView(cameraSize.width.toDouble() / cameraSize.height, profile.video.zoomRatio.coerceIn(cameraInfo.zoomRange))
+        Stabilizer(cameraInfo.facing, cameraInfo.sensorOrientation, orientation.rotationDeg, h, v, profile.video.levelHorizon)
+            .also { st -> sensors.gyroSink = { t, x, y, z -> st.onGyro(t, x, y, z) } }
+    } else null
 
     private val composer = MetadataComposer(
         ComposerSettings(
@@ -148,9 +157,15 @@ class StreamPipeline(
         if (profile.advanced.recordLocally) recorder = openRecording()
         sensors.start()
         encoder.start()
-        val cameraTarget = if (orientation.rotationDeg == 0) encoder.inputSurface else {
-            RotatingRenderer(
-                encoder.inputSurface, cameraSize.width, cameraSize.height, orientation.rotationDeg, size.width, size.height,
+        val cameraTarget = if (orientation.rotationDeg == 0 && stabilizer == null) encoder.inputSurface else {
+            val mapping = stabilizer?.let { st ->
+                { timestampNs: Long ->
+                    val captureUs = camera.toCaptureUs(timestampNs / 1000)
+                    st.frame(captureUs, sensors.poseAt(captureUs, cameraInfo.facing, cameraInfo.sensorOrientation)).homography
+                }
+            }
+            FrameRenderer(
+                encoder.inputSurface, cameraSize.width, cameraSize.height, orientation.rotationDeg, size.width, size.height, mapping,
             ).also { renderer = it }.inputSurface
         }
         camera.start(cameraTarget)
@@ -172,7 +187,13 @@ class StreamPipeline(
     fun setPreview(target: PreviewTarget?) = camera.setPreview(target?.takeIf { it.surface.isValid })
 
 
-    fun setZoom(ratio: Double) = camera.setZoom(ratio)
+    fun setZoom(ratio: Double) {
+        camera.setZoom(ratio)
+        stabilizer?.let { st ->
+            val (h, v) = cameraInfo.fieldOfView(sensorAspect, ratio.coerceIn(cameraInfo.zoomRange))
+            st.setFieldOfView(h, v)
+        }
+    }
 
     val zoomRange get() = cameraInfo.zoomRange
 
@@ -214,12 +235,21 @@ class StreamPipeline(
     private fun writeKlv(captureUs: Long, now: Long) {
         // FOV in sensor orientation, then swapped if the stream is turned on its side.
         val (sensorH, sensorV) = cameraInfo.fieldOfView(sensorAspect, camera.zoomRatio)
-        val (hfov, vfov) = if (orientation.swapsAxes) sensorV to sensorH else sensorH to sensorV
+        val (rawH, rawV) = if (orientation.swapsAxes) sensorV to sensorH else sensorH to sensorV
+        // Stabilisation shows a cropped, steadied virtual camera: describe that one.
+        val crop = stabilizer?.cropScale ?: 1.0
+        val hfov = Stabilizer.croppedFov(rawH, crop)
+        val vfov = Stabilizer.croppedFov(rawV, crop)
+        val pose = stabilizer?.let { st ->
+            sensors.poseAt(captureUs, cameraInfo.facing, cameraInfo.sensorOrientation)
+                ?.corrected(st.correctionAt(captureUs))
+                ?.rotatedImage(orientation.rotationDeg)
+        } ?: sensors.poseAt(captureUs, cameraInfo.facing, orientation.remainingSensorRotationDeg)
         val metadata = composer.compose(
             timestampUtcMicros = sensors.utcMicros(captureUs),
             captureUs = captureUs,
             fix = sensors.latestFix,
-            pose = sensors.poseAt(captureUs, cameraInfo.facing, orientation.remainingSensorRotationDeg),
+            pose = pose,
             horizontalFovDeg = hfov,
             verticalFovDeg = vfov,
         )

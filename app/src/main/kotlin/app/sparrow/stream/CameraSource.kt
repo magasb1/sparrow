@@ -20,6 +20,7 @@ import android.util.Size
 import android.view.Surface
 import android.view.SurfaceHolder
 import app.sparrow.core.config.FocusMode
+import app.sparrow.core.config.StabilizationMode
 import app.sparrow.core.config.VideoSettings
 import app.sparrow.core.geo.FrameGeometry
 import app.sparrow.core.geo.LensFacing
@@ -255,7 +256,8 @@ class CameraSource(
             }
             set(
                 CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
-                if (settings.stabilization) CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
+                // Only in CAMERA mode: GYRO does its own, and both at once would fight.
+                if (settings.stabilizationMode == StabilizationMode.CAMERA) CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
                 else CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF,
             )
             if (Build.VERSION.SDK_INT >= 30) {

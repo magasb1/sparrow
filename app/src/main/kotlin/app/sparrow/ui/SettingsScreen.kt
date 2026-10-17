@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import app.sparrow.core.config.FocusMode
 import app.sparrow.core.config.Profile
 import app.sparrow.core.config.RateControl
+import app.sparrow.core.config.StabilizationMode
 import app.sparrow.core.config.SrtMode
 import app.sparrow.core.klv.Tag
 import app.sparrow.core.srt.SrtUrl
@@ -134,7 +135,19 @@ fun SettingsScreen(profiles: ProfileRepository, onBack: () -> Unit) {
                 ChoiceRow("Focus", FocusMode.entries, p.video.focus, { p = p.copy(video = p.video.copy(focus = it)) }) {
                     if (it == FocusMode.CONTINUOUS) "Continuous" else "Infinity"
                 }
-                SwitchRow("Stabilisation", p.video.stabilization, { p = p.copy(video = p.video.copy(stabilization = it)) })
+                ChoiceRow("Stabilisation", StabilizationMode.entries, p.video.stabilizationMode, { p = p.copy(video = p.video.copy(stabilizationMode = it)) }) {
+                    when (it) {
+                        StabilizationMode.OFF -> "Off"
+                        StabilizationMode.CAMERA -> "Camera"
+                        StabilizationMode.GYRO -> "Gyro (Sparrow)"
+                    }
+                }
+                if (p.video.stabilizationMode == StabilizationMode.GYRO) {
+                    SwitchRow(
+                        "Level horizon", p.video.levelHorizon, { p = p.copy(video = p.video.copy(levelHorizon = it)) },
+                        supporting = "Keeps the horizon level in the stream however the phone is tilted. Crops 20 % instead of 10 %.",
+                    )
+                }
             }
 
             Section("Audio") {

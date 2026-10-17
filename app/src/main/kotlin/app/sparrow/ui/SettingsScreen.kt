@@ -202,10 +202,32 @@ fun SettingsScreen(profiles: ProfileRepository, onBack: () -> Unit) {
                         }
                     }
                     SwitchRow(
+                        "Only when something moves", p.detection.motionGating, { p = p.copy(detection = p.detection.copy(motionGating = it)) },
+                        supporting = "MOG2 motion detection wakes the model; a still scene is re-checked every 2 s. Saves battery.",
+                    )
+                    SwitchRow(
                         "Send targets in KLV", p.detection.sendVmti, { p = p.copy(detection = p.detection.copy(sendVmti = it)) },
                         supporting = "MISB ST 0903 VMTI in ST 0601 tag 74, with ground positions when GNSS allows.",
                     )
                 }
+            }
+
+            Section("Smart encoding") {
+                SwitchRow(
+                    "Content-adaptive bitrate", p.smartEncoding.contentAdaptive,
+                    { p = p.copy(smartEncoding = p.smartEncoding.copy(contentAdaptive = it)) },
+                    supporting = "Lowers the bitrate while nothing in the scene moves; full rate returns at once with motion or camera movement.",
+                )
+                if (p.smartEncoding.contentAdaptive) {
+                    ChoiceRow("Static-scene bitrate", listOf(0.35, 0.5, 0.7), p.smartEncoding.staticFraction, { p = p.copy(smartEncoding = p.smartEncoding.copy(staticFraction = it)) }) {
+                        "%.0f %% · %.2f Mb/s".format(it * 100, it * p.video.bitrateKbps / 1000)
+                    }
+                }
+                SwitchRow(
+                    "Region-of-interest encoding", p.smartEncoding.regionOfInterest,
+                    { p = p.copy(smartEncoding = p.smartEncoding.copy(regionOfInterest = it)) },
+                    supporting = "Spends more bits on tracked objects and motion. Android 15+, where the encoder supports it.",
+                )
             }
 
             Section("Advanced") {

@@ -20,6 +20,7 @@ import app.sparrow.log.AppLog
 import app.sparrow.stream.GnssStatus
 import app.sparrow.stream.LinkState
 import app.sparrow.stream.StreamController
+import app.sparrow.stream.SceneStatus
 import app.sparrow.stream.StreamStatus
 import com.github.takahirom.roborazzi.captureRoboImage
 import org.junit.After
@@ -147,7 +148,12 @@ class ScreenshotTest {
     private fun setDetections() {
         val repo = app.profiles
         repo.save(repo.active.copy(detection = repo.active.detection.copy(enabled = true)))
-        StreamController.update { it.copy(detection = DetectionStats(inferenceMs = 182, rateHz = 4.0, detections = 4)) }
+        StreamController.update {
+            it.copy(
+                detection = DetectionStats(inferenceMs = 182, rateHz = 4.0, detections = 4),
+                scene = SceneStatus(activity = 0.012f, bitrateFraction = 0.86, cameraMoving = false, roi = true),
+            )
+        }
         StreamController.publishTracks(
             listOf(
                 TrackedObject(12, 1, 0.91f, Box(0.30f, 0.50f, 0.36f, 0.68f), 40),

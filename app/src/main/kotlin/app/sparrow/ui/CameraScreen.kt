@@ -588,7 +588,7 @@ private fun Banner(status: StreamStatus, interrupted: Boolean, onDismiss: () -> 
 private fun StatsPanel(status: StreamStatus, profile: Profile) {
     val v = profile.video
     Column(
-        Modifier.widthIn(min = 240.dp, max = 300.dp).clip(RoundedCornerShape(14.dp)).background(ScrimStrong).padding(14.dp),
+        Modifier.widthIn(min = 240.dp, max = 300.dp).clip(RoundedCornerShape(14.dp)).background(Color.Black.copy(alpha = 0.84f)).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text("Stream", color = Color.White, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
@@ -606,7 +606,18 @@ private fun StatsPanel(status: StreamStatus, profile: Profile) {
             if (status.running && !status.gnss.hasFix) WarnAmber else Color.White,
         )
         status.detection?.let { d ->
-            StatLine("Detection", "RF-DETR Nano · %.1f Hz · %d ms".format(d.rateHz, d.inferenceMs))
+            val gated = if (profile.detection.motionGating) " · motion-gated" else ""
+            StatLine("Detection", "RF-DETR Nano · %.1f Hz · %d ms".format(d.rateHz, d.inferenceMs) + gated)
+        }
+        status.scene?.let { sc ->
+            val what = when {
+                sc.cameraMoving -> "Camera moving"
+                sc.activity < 0.002f -> "Static"
+                else -> "Motion %.1f %%".format(sc.activity * 100)
+            }
+            val rate = sc.bitrateFraction?.let { " · bitrate %.0f %%".format(it * 100) } ?: ""
+            val roi = when (sc.roi) { true -> " · ROI"; false -> " · ROI n/a"; null -> "" }
+            StatLine("Scene", what + rate + roi)
         }
         StatLine("Metadata", "ST 0601.${profile.metadata.lsVersion} · ${"%.0f".format(profile.metadata.rateHz)} Hz · ${if (profile.metadata.carriage.name == "SYNC") "sync" else "async"}")
         status.recordingPath?.let { StatLine("Recording", it.substringAfterLast('/')) }

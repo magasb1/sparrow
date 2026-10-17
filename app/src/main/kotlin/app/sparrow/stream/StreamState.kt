@@ -44,6 +44,18 @@ data class StreamStatus(
     val detection: app.sparrow.cv.DetectionStats? = null,
     /** This camera cannot run the extra analysis stream, so detection is off for the session. */
     val detectionUnavailable: Boolean = false,
+    /** Smart-encoding view of the scene; null until the first motion sample. */
+    val scene: SceneStatus? = null,
+)
+
+data class SceneStatus(
+    /** Moving fraction of the frame (MOG2). */
+    val activity: Float,
+    /** Content-adaptive share of the configured bitrate; null when that is off. */
+    val bitrateFraction: Double?,
+    val cameraMoving: Boolean,
+    /** Region-of-interest encoding: null = off, false = encoder cannot, true = active. */
+    val roi: Boolean?,
 )
 
 data class PreviewTarget(val surface: Surface, val width: Int, val height: Int)

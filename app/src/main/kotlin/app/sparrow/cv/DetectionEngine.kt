@@ -13,6 +13,9 @@ import android.os.SystemClock
 import android.util.Size
 import android.view.Surface
 import app.sparrow.core.config.DetectionSettings
+import app.sparrow.core.cv.DetectionScheduler
+import app.sparrow.core.cv.MotionAnalyzer
+import app.sparrow.core.cv.MotionResult
 import app.sparrow.core.cv.RfDetr
 import app.sparrow.core.cv.TrackedObject
 import app.sparrow.core.cv.Tracker
@@ -38,6 +41,10 @@ class DetectionEngine(
     analysisSize: Size,
     /** Converts a camera timestamp (µs) to the capture clock. */
     private val toCaptureUs: (Long) -> Long,
+    /** True while the phone itself turns (gyroscope); MOG2 cannot tell that from scene motion. */
+    private val isCameraMoving: (Long) -> Boolean = { false },
+    /** Every analysed frame's motion, on the frames thread (content bitrate, ROI). */
+    private val onMotion: (MotionResult, Boolean) -> Unit = { _, _ -> },
     private val onResults: (DetectionStats) -> Unit,
 ) {
     // Frames are taken and returned on one thread and analysed on another, so a slow inference
@@ -57,8 +64,12 @@ class DetectionEngine(
     private val tensorBuffer: FloatBuffer = java.nio.ByteBuffer.allocateDirect(4 * input.size)
         .order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer()
     private var frame: YuvFrame? = null
-    private val intervalMs = (1000 / settings.rateHz).toLong()
-    private var lastRunMs = 0L
+    private val motion = MotionAnalyzer()
+    private var lumaFrame: YuvFrame? = null
+    private val scheduler = DetectionScheduler(activeIntervalUs = (1_000_000 / settings.rateHz).toLong())
+    private val intervalUs = (1_000_000 / settings.rateHz).toLong()
+    private var lastRunUs = Long.MIN_VALUE
+    private var lastMotionUs = Long.MIN_VALUE
     private var lastStatsMs = 0L
     private var runs = 0
 
@@ -67,6 +78,13 @@ class DetectionEngine(
             field = value
             // Cleared on the detector thread so an inference in flight cannot bring tracks back.
             if (!value) runCatching { inference.execute { tracker.clear() } }
+        }
+
+    /** MOG2 motion analysis, for detection gating and smart encoding; independent of [enabled]. */
+    @Volatile var motionEnabled = false
+        set(value) {
+            field = value
+            if (!value) handler.post { motion.reset() }
         }
 
     val surface: Surface get() = reader.surface
@@ -80,10 +98,22 @@ class DetectionEngine(
         val captureUs: Long
         val f: YuvFrame
         try {
-            val now = SystemClock.elapsedRealtime()
-            if (!enabled || loadFailed || busy || now - lastRunMs < intervalMs) return
-            lastRunMs = now
             captureUs = toCaptureUs(image.timestamp / 1000)
+            val moving = isCameraMoving(captureUs)
+            // MOG2 is cheap (160×90): run it on every frame, at most 15 per second.
+            val result = if (motionEnabled && (lastMotionUs == Long.MIN_VALUE || captureUs - lastMotionUs >= 60_000)) {
+                lastMotionUs = captureUs
+                val luma = copyLuma(image, lumaFrame).also { lumaFrame = it }
+                motion.analyze(luma, rotationDeg, moving).also { onMotion(it, moving) }
+            } else null
+            if (!enabled || loadFailed || busy) return
+            val run = if (settings.motionGating && motionEnabled) {
+                // Only frames that went through MOG2 can be judged; others wait for the next one.
+                result != null && scheduler.shouldRun(captureUs, result, moving, tracker.snapshot(captureUs))
+            } else {
+                (lastRunUs == Long.MIN_VALUE || captureUs - lastRunUs >= intervalUs).also { if (it) lastRunUs = captureUs }
+            }
+            if (!run) return
             // Safe to reuse: the previous inference has finished reading it (busy is false).
             f = copy(image, frame).also { frame = it }
         } finally {
@@ -159,10 +189,21 @@ class DetectionEngine(
         }
     }
 
+    /** Copies only the luma plane (all MOG2 needs). */
+    private fun copyLuma(image: Image, reuse: YuvFrame?): YuvFrame {
+        val yp = image.planes[0]
+        val buffer = yp.buffer.duplicate() // independent position: copy() may read the plane again
+        val n = buffer.remaining()
+        val y = reuse?.y?.takeIf { it.size >= n } ?: ByteArray(n)
+        buffer.get(y, 0, n)
+        return YuvFrame(image.width, image.height, y, yp.rowStride, EMPTY, EMPTY, 0, 0)
+    }
+
     /** Copies the YUV planes into reusable arrays so the Image can be returned at once. */
     private fun copy(image: Image, reuse: YuvFrame?): YuvFrame {
         val (yp, up, vp) = image.planes
-        fun bytes(buffer: java.nio.ByteBuffer, old: ByteArray?): ByteArray {
+        fun bytes(source: java.nio.ByteBuffer, old: ByteArray?): ByteArray {
+            val buffer = source.duplicate()
             val n = buffer.remaining()
             val a = if (old != null && old.size >= n) old else ByteArray(n)
             buffer.get(a, 0, n)
@@ -196,6 +237,8 @@ class DetectionEngine(
     private fun FloatBuffer.toArray(): FloatArray = FloatArray(remaining()).also { get(it) }
 
     companion object {
+        private val EMPTY = ByteArray(0)
+
         /** Smallest YUV size with the stream's aspect ratio and at least 640 px wide. */
         fun analysisSize(sizes: List<Size>, aspect: Double): Size? = sizes
             .filter { kotlin.math.abs(it.width.toDouble() / it.height - aspect) < 0.02 && it.width >= 640 }

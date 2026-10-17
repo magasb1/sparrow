@@ -53,6 +53,21 @@ class SensorHub(private val context: Context) {
     private var poseIndex = 0
     private val rotation = FloatArray(9)
 
+    /** Last time the gyroscope saw the phone turning faster than [MOVING_RAD_S], µs. */
+    @Volatile private var lastTurnUs = Long.MIN_VALUE
+
+    private val gyroListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            val (x, y, z) = event.values
+            if (x * x + y * y + z * z > MOVING_RAD_S * MOVING_RAD_S) lastTurnUs = event.timestamp / 1000
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
+    }
+
+    /** True while the phone itself is turning (panning, handling), as opposed to the scene moving. */
+    fun isCameraMoving(nowUs: Long): Boolean = lastTurnUs != Long.MIN_VALUE && nowUs - lastTurnUs < MOVING_HOLD_US
+
     private val sensorListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
             SensorManager.getRotationMatrixFromVector(rotation, event.values)
@@ -80,6 +95,9 @@ class SensorHub(private val context: Context) {
         } else {
             sensorManager.registerListener(sensorListener, rotationSensor, 20_000, handler)
         }
+        sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let {
+            sensorManager.registerListener(gyroListener, it, 20_000, handler)
+        }
         runCatching {
             locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 500L, 0f, locationListener, thread.looper)
             locationManager.addNmeaListener(nmeaListener, handler)
@@ -89,6 +107,7 @@ class SensorHub(private val context: Context) {
     fun stop() {
         if (!thread.isAlive) return
         sensorManager.unregisterListener(sensorListener)
+        sensorManager.unregisterListener(gyroListener)
         runCatching {
             locationManager.removeUpdates(locationListener)
             locationManager.removeNmeaListener(nmeaListener)
@@ -167,6 +186,10 @@ class SensorHub(private val context: Context) {
 
     companion object {
         const val FIX_TIMEOUT_MS = 3000L
+
+        /** About 11°/s: above hand tremor, below a deliberate pan. */
+        const val MOVING_RAD_S = 0.2f
+        const val MOVING_HOLD_US = 400_000L
 
         fun systemUtcOffset(): Long = System.currentTimeMillis() * 1000 - SystemClock.elapsedRealtimeNanos() / 1000
 

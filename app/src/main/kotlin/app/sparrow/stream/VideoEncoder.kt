@@ -40,6 +40,11 @@ class VideoEncoder(
     @Volatile var bitrateKbps: Int = settings.bitrateKbps
         private set
 
+    /** True when the encoder takes per-frame QP offset rectangles (Android 15+). */
+    @Volatile var roiSupported = false
+        private set
+    private var lastRoi: String? = null
+
     init {
         val format = MediaFormat.createVideoFormat(mime, size.width, size.height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
@@ -56,7 +61,10 @@ class VideoEncoder(
             else MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR
             if (supportsMode(mode)) setInteger(MediaFormat.KEY_BITRATE_MODE, mode)
         }
-        val profiled = MediaFormat(format).apply { applyBestProfile(this, size) }
+        val profiled = MediaFormat(format).apply {
+            applyBestProfile(this, size)
+            if (roiCapable()) setFeatureEnabled(MediaCodecInfo.CodecCapabilities.FEATURE_Roi, true)
+        }
         val callback = object : MediaCodec.Callback() {
             override fun onInputBufferAvailable(codec: MediaCodec, index: Int) = Unit
 
@@ -93,8 +101,10 @@ class VideoEncoder(
         try {
             try {
                 mediaCodec.configure(profiled, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                roiSupported = roiCapable()
             } catch (e: Exception) {
                 AppLog.w("Encoder rejected the requested profile; using its default", e)
+                roiSupported = false
                 mediaCodec.reset()
                 mediaCodec.setCallback(callback, Handler(thread.looper))
                 mediaCodec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
@@ -115,6 +125,23 @@ class VideoEncoder(
         if (kbps == bitrateKbps) return
         bitrateKbps = kbps
         runCatching { mediaCodec.setParameters(Bundle().apply { putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, kbps * 1000) }) }
+    }
+
+    private fun roiCapable(): Boolean = android.os.Build.VERSION.SDK_INT >= 35 && runCatching {
+        mediaCodec.codecInfo.getCapabilitiesForType(mime).isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_Roi)
+    }.getOrDefault(false)
+
+    /**
+     * Sets the quality regions for the coming frames in MediaCodec's qp-offset-rects format; an
+     * empty string clears them. Repeated values are not resent.
+     */
+    fun setRoi(rects: String) {
+        if (!roiSupported || android.os.Build.VERSION.SDK_INT < 35 || rects == lastRoi) return
+        lastRoi = rects
+        // A neutral 16×16 region clears earlier ones on encoders that keep the last list.
+        val value = rects.ifEmpty { "0,0-15,15=0" }
+        runCatching { mediaCodec.setParameters(Bundle().apply { putString(MediaCodec.PARAMETER_KEY_QP_OFFSET_RECTS, value) }) }
+            .onFailure { AppLog.w("ROI rejected; disabling", it); roiSupported = false }
     }
 
     /** Requests an IDR frame, e.g. when a receiver (re)connects. */

@@ -62,6 +62,21 @@ Optional, per profile, and switchable live with the target button on the viewfin
   GNSS and attitude allow.
 * **Default classes:** people, bicycles, cars, motorcycles, aircraft, buses, trains, trucks, boats.
 
+## Smart encoding (motion-aware)
+
+A MOG2 background subtractor (pure Kotlin, Zivkovic's algorithm as in OpenCV) runs on a 160×90
+luma copy of every analysis frame (≈15 Hz, about 1–2 ms) and drives three things:
+
+| Feature | What it does | Default |
+| --- | --- | --- |
+| Motion-gated detection | RF-DETR runs at its rate only while something moves (plus 2 s hold-over), at once for a moving blob no track explains, and otherwise every 2 s as a keep-alive | On |
+| Content-adaptive bitrate | Static scene → bitrate falls slowly towards 50 % of the target; motion or camera movement → full rate at once. Never above the link ABR ceiling | On |
+| Region-of-interest encoding | Tracked objects (QP −6) and other motion (QP −3) get more bits via MediaCodec `qp-offset-rects` | On (Android 15+, encoders with `region-of-interest`) |
+
+MOG2 assumes a still camera, so the gyroscope separates camera movement from scene motion: while
+the phone turns faster than about 11°/s, motion analysis pauses, the bitrate stays at full and the
+detector runs at its normal rate; the background model relearns once the camera settles.
+
 `RfDetrModelTest` runs the shipped model in a JVM test with the app's own Kotlin pre- and
 post-processing (ARGB and YUV paths, plus the portrait rotation) on COCO images.
 
@@ -180,6 +195,8 @@ Known gaps and notes:
   1–3, 5, 6, 17, 102); validate it against the customer's VMTI-capable receiver.
 * Some cameras cannot run a third (analysis) stream; detection then reports "unavailable" for that
   camera until the app restarts.
+* ROI uses MediaCodec's `qp-offset-rects` string format (`top,left-bottom,right=offset;…`) as
+  documented for Android 15; check the effect on the reference devices' encoders.
 * Switching detection on during a live stream rebuilds the capture session once (a short gap in
   the video) if it was off at Go live; switching it off never interrupts the video.
 * Portrait and reverse-landscape streams go through a GPU rotation stage (`RotatingRenderer`);

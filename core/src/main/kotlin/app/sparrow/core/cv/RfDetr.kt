@@ -64,7 +64,7 @@ object RfDetr {
     fun sensorPoint(s: Float, t: Float, rotationDeg: Int): Pair<Float, Float> = sensorX(s, t, rotationDeg) to sensorY(s, t, rotationDeg)
 
     @Suppress("NOTHING_TO_INLINE")
-    private inline fun sensorX(s: Float, t: Float, rotationDeg: Int): Float = when (rotationDeg) {
+    internal inline fun sensorX(s: Float, t: Float, rotationDeg: Int): Float = when (rotationDeg) {
         90 -> t
         180 -> 1f - s
         270 -> 1f - t
@@ -72,7 +72,7 @@ object RfDetr {
     }
 
     @Suppress("NOTHING_TO_INLINE")
-    private inline fun sensorY(s: Float, t: Float, rotationDeg: Int): Float = when (rotationDeg) {
+    internal inline fun sensorY(s: Float, t: Float, rotationDeg: Int): Float = when (rotationDeg) {
         90 -> 1f - s
         180 -> 1f - t
         270 -> s

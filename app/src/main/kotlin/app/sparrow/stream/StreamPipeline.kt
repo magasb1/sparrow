@@ -4,7 +4,10 @@ import android.content.Context
 import android.os.Environment
 import android.util.Size
 import app.sparrow.core.config.Profile
+import app.sparrow.core.cv.MotionResult
 import app.sparrow.core.cv.TargetGeometry
+import app.sparrow.core.srt.ContentBitrate
+import app.sparrow.core.srt.RoiPlanner
 import app.sparrow.core.cv.TargetReport
 import app.sparrow.core.geo.CameraPose
 import app.sparrow.core.klv.LatLon
@@ -108,10 +111,8 @@ class StreamPipeline(
 
         override fun onStats(sample: LinkSample, sendKbps: Double) {
             val loss = if (sample.packetsSent > 0) 100.0 * sample.packetsLost / sample.packetsSent else 0.0
-            abr?.onSample(sample)?.let {
-                AppLog.i("ABR: video bitrate → $it kbit/s")
-                encoder.setBitrate(it)
-            }
+            abr?.onSample(sample)?.let { AppLog.i("ABR: link ceiling → $it kbit/s") }
+            applyBitrate()
             StreamController.update {
                 it.copy(sendKbps = sendKbps, rttMs = sample.rttMs, lossPercent = loss, targetKbps = encoder.bitrateKbps)
             }
@@ -168,6 +169,8 @@ class StreamPipeline(
             ).also { renderer = it }.inputSurface
         }
         // Before start(), so the first capture session already includes the analysis stream.
+        detectionOn = profile.detection.enabled
+        if (detectionOn || motionWanted()) ensureEngine()?.let { it.motionEnabled = motionWanted() }
         setDetectionEnabled(profile.detection.enabled)
         camera.start(cameraTarget)
         audio?.start()
@@ -194,27 +197,81 @@ class StreamPipeline(
     @Synchronized
     fun setDetectionEnabled(on: Boolean) {
         if (stopped) return
-        if (on && (analysisSize == null || cameraInfo.id in CameraSource.analysisUnsupportedCameras)) {
-            onAnalysisUnavailable()
-            return
-        }
-        val d = detector ?: if (on) createDetector(analysisSize!!) else return
+        detectionOn = on
+        val d = if (on) ensureEngine() ?: return else detector ?: return
         if (d.enabled == on) return
         d.enabled = on
-        if (on) {
-            // Adding the output rebuilds the session once (a short gap in the video when live);
-            // switching off keeps it, so the stream is not interrupted again.
-            camera.setAnalysis(d.surface)
-        } else {
+        d.motionEnabled = motionWanted()
+        if (!on) {
             StreamController.publishTracks(emptyList())
             StreamController.update { it.copy(detection = null) }
         }
         AppLog.i("Object detection ${if (on) "on" else "off"}")
     }
 
-    private fun createDetector(size: Size) = DetectionEngine(
-        context, profile.detection, orientation.rotationDeg, size, { camera.toCaptureUs(it) },
-    ) { stats -> StreamController.update { it.copy(detection = stats) } }.also { detector = it }
+    private var detectionOn = false
+
+    /** MOG2 runs when it gates detection or drives the bitrate/ROI. */
+    private fun motionWanted() = smart.contentAdaptive || smart.regionOfInterest || (detectionOn && profile.detection.motionGating)
+
+    /** Analysis engine with its camera output, created on first need. */
+    private fun ensureEngine(): DetectionEngine? {
+        detector?.let { return it }
+        if (analysisSize == null || cameraInfo.id in CameraSource.analysisUnsupportedCameras) {
+            onAnalysisUnavailable()
+            return null
+        }
+        val d = DetectionEngine(
+            context, profile.detection, orientation.rotationDeg, analysisSize, { camera.toCaptureUs(it) },
+            isCameraMoving = { sensors.isCameraMoving(it) },
+            onMotion = { m, moving -> onMotion(m, moving) },
+        ) { stats -> StreamController.update { it.copy(detection = stats) } }
+        detector = d
+        // Adding the output rebuilds the session once (a short gap in the video when live);
+        // it then stays, so later toggles never interrupt the stream.
+        camera.setAnalysis(d.surface)
+        return d
+    }
+
+    private val smart = profile.smartEncoding
+    private val content = if (smart.contentAdaptive) {
+        ContentBitrate(profile.video.bitrateKbps, minOf(profile.advanced.minBitrateKbps, profile.video.bitrateKbps), smart.staticFraction)
+    } else null
+    private var lastBitrateCheckUs = 0L
+    private var lastRoiUs = 0L
+
+    /** Frames thread: scene motion drives the content bitrate and the quality regions. */
+    private fun onMotion(m: MotionResult, cameraMoving: Boolean) {
+        if (m.learning && !cameraMoving) return
+        content?.onActivity(m.activity, cameraMoving)
+        val now = SensorHub.nowUs()
+        if (now - lastBitrateCheckUs >= 1_000_000) {
+            lastBitrateCheckUs = now
+            applyBitrate()
+            StreamController.update {
+                it.copy(scene = SceneStatus(activity = m.activity, bitrateFraction = content?.fraction, cameraMoving = cameraMoving, roi = roiState()))
+            }
+        }
+        if (smart.regionOfInterest && encoder.roiSupported && now - lastRoiUs >= 200_000) {
+            lastRoiUs = now
+            val tracks = detector?.snapshot(now)?.map { it.box }.orEmpty()
+            encoder.setRoi(RoiPlanner.format(RoiPlanner.plan(size.width, size.height, tracks, if (cameraMoving) emptyList() else m.blobs)))
+        }
+    }
+
+    private fun roiState(): Boolean? = if (!smart.regionOfInterest) null else encoder.roiSupported
+
+    /** Encoder target = link ABR ceiling, lowered further on static scenes. */
+    @Synchronized
+    private fun applyBitrate() {
+        val ceiling = abr?.targetKbps ?: profile.video.bitrateKbps
+        val target = content?.targetKbps(ceiling) ?: ceiling
+        val current = encoder.bitrateKbps
+        if (kotlin.math.abs(target - current) >= maxOf(25, current / 20)) {
+            encoder.setBitrate(target)
+            AppLog.i("Video bitrate → $target kbit/s (link ${ceiling}, scene ${content?.fraction?.let { "%.0f%%".format(it * 100) } ?: "off"})")
+        }
+    }
 
     private fun onAnalysisUnavailable() {
         detector?.enabled = false

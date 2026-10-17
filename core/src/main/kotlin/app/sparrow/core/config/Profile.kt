@@ -79,6 +79,18 @@ data class DetectionSettings(
     val classes: Set<Int> = app.sparrow.core.cv.CocoClasses.DEFAULT_WATCH,
     /** Send tracks as VMTI in KLV Tag 74. */
     val sendVmti: Boolean = true,
+    /** Run the model only when MOG2 sees motion (plus a slow keep-alive), saving battery. */
+    val motionGating: Boolean = true,
+)
+
+/** Bandwidth savings driven by scene content (MOG2 motion and detections). */
+@Serializable
+data class SmartEncodingSettings(
+    /** Lower the bitrate towards [staticFraction] while nothing moves. */
+    val contentAdaptive: Boolean = true,
+    val staticFraction: Double = 0.5,
+    /** Give tracked objects and motion more bits (Android 15+, encoder permitting). */
+    val regionOfInterest: Boolean = true,
 )
 
 @Serializable
@@ -100,6 +112,7 @@ data class Profile(
     val audio: AudioSettings = AudioSettings(),
     val metadata: MetadataSettings = MetadataSettings(),
     val detection: DetectionSettings = DetectionSettings(),
+    val smartEncoding: SmartEncodingSettings = SmartEncodingSettings(),
     val advanced: AdvancedSettings = AdvancedSettings(),
 ) {
     /** Problems that block streaming, as human-readable messages. Empty = valid. */
@@ -126,6 +139,7 @@ data class Profile(
         if (det.rateHz !in 0.5..15.0) add("Detection rate must be 0.5–15 Hz")
         if (det.minConfidence !in 0.05..0.99) add("Detection confidence must be 5–99 %")
         if (det.enabled && det.classes.isEmpty()) add("Choose at least one object class to detect")
+        if (smartEncoding.staticFraction !in 0.2..1.0) add("Static-scene bitrate must be 20–100 %")
         val a = advanced
         if (a.adaptiveBitrate && a.minBitrateKbps > a.maxBitrateKbps) add("ABR minimum exceeds maximum")
     }

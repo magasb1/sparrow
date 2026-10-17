@@ -1,6 +1,7 @@
 package app.sparrow.ui
 
 import android.Manifest
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -10,12 +11,15 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import app.sparrow.SparrowApp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.sparrow.stream.StreamController
 import app.sparrow.stream.StreamingService
 
 enum class Screen { Main, Settings, Profiles, Inspector, Log, Onboarding }
@@ -46,6 +50,13 @@ class MainActivity : ComponentActivity() {
                 var screen by rememberSaveable {
                     mutableStateOf(if (app.onboardingDone) Screen.Main else Screen.Onboarding)
                 }
+                // Free rotation while idle; locked to the stream's orientation while live, because a
+                // stream cannot change resolution mid-flight.
+                val status by StreamController.status.collectAsStateWithLifecycle()
+                LaunchedEffect(status.running, status.displayRotationDeg) {
+                    requestedOrientation = status.displayRotationDeg?.takeIf { status.running }?.let(::lockFor)
+                        ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                }
                 BackHandler(enabled = screen != Screen.Main && screen != Screen.Onboarding) { screen = Screen.Main }
                 when (screen) {
                     Screen.Onboarding -> OnboardingScreen(
@@ -72,6 +83,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /** Phone mapping from display rotation to a fixed activity orientation. */
+    private fun lockFor(rotationDeg: Int) = when (rotationDeg) {
+        90 -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        180 -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+        270 -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+        else -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
     }
 
     override fun onResume() {

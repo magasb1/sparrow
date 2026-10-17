@@ -38,6 +38,8 @@ data class StreamStatus(
     val zoomRange: ClosedFloatingPointRange<Double> = 1.0..1.0,
     /** elapsedRealtime (ms) when the link last went live; null while not live. */
     val liveSinceMs: Long? = null,
+    /** Display rotation the stream was started in; the UI stays locked to it while running. */
+    val displayRotationDeg: Int? = null,
 )
 
 data class PreviewTarget(val surface: Surface, val width: Int, val height: Int)

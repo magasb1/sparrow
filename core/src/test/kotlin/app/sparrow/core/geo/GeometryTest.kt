@@ -107,3 +107,38 @@ class GeometryTest {
         assertEquals(0.0, fresh.frameCenterElevation!!, 0.0)
     }
 }
+
+class StreamOrientationTest {
+    @Test
+    fun `back camera at the four display rotations`() {
+        // Typical back camera: sensor orientation 90, landscape buffer 1280x720.
+        val portrait = StreamOrientation.of(90, 0, LensFacing.BACK, 1280, 720)
+        assertEquals(90, portrait.rotationDeg)
+        assertEquals(720 to 1280, portrait.width to portrait.height)
+        assertEquals(0, portrait.remainingSensorRotationDeg)
+
+        val landscape = StreamOrientation.of(90, 90, LensFacing.BACK, 1280, 720)
+        assertEquals(0, landscape.rotationDeg)
+        assertEquals(1280 to 720, landscape.width to landscape.height)
+        assertEquals(90, landscape.remainingSensorRotationDeg)
+
+        assertEquals(180, StreamOrientation.of(90, 270, LensFacing.BACK, 1280, 720).rotationDeg)
+        assertEquals(270, StreamOrientation.of(90, 180, LensFacing.BACK, 1280, 720).rotationDeg)
+    }
+
+    @Test
+    fun `portrait stream of a phone held upright facing north is level`() {
+        // Same device pose as the portrait test above; after rotating the image 90° it is upright.
+        val r = Mat3(doubleArrayOf(1.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 1.0, 0.0))
+        val o = StreamOrientation.of(90, 0, LensFacing.BACK, 1280, 720)
+        val pose = CameraPose.fromDevice(r, LensFacing.BACK, o.remainingSensorRotationDeg)
+        assertEquals(0.0, pose.rollDeg, 1e-9)
+        assertEquals(0.0, pose.azimuthDeg, 1e-9)
+    }
+
+    @Test
+    fun `front camera uses the mirrored formula`() {
+        assertEquals(270, StreamOrientation.of(270, 0, LensFacing.FRONT, 1280, 720).rotationDeg)
+        assertEquals(0, StreamOrientation.of(270, 90, LensFacing.FRONT, 1280, 720).rotationDeg)
+    }
+}

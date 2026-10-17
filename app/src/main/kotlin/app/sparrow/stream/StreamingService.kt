@@ -43,6 +43,7 @@ class StreamingService : LifecycleService() {
     private val main = Handler(Looper.getMainLooper())
     private var restarts = ArrayDeque<Long>()
     private var stopping = false
+    private var streamRotationDeg = 0
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
@@ -70,6 +71,8 @@ class StreamingService : LifecycleService() {
     private fun startStreaming() {
         if (pipeline != null) return
         stopping = false
+        // Fixed for the whole session, including automatic restarts with the screen off.
+        streamRotationDeg = displayRotationDeg()
         val app = SparrowApp.get(this)
         val profile = app.profiles.active
         val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
@@ -107,7 +110,7 @@ class StreamingService : LifecycleService() {
         try {
             // Failures are only honoured from the current pipeline, so one fault reported by
             // several components (or by an old pipeline) costs a single restart.
-            val p = StreamPipeline(this, profile) { reason ->
+            val p = StreamPipeline(this, profile, streamRotationDeg) { reason ->
                 main.post { if (self != null && pipeline === self) onPipelineFailure(reason) }
             }
             self = p
@@ -140,6 +143,12 @@ class StreamingService : LifecycleService() {
         }
         StreamController.update { it.copy(link = LinkState.Reconnecting(3000, reason)) }
         main.postDelayed({ if (!stopping && pipeline == null) launchPipeline() }, 3000)
+    }
+
+    /** Current rotation of the built-in display, in degrees. */
+    private fun displayRotationDeg(): Int {
+        val display = getSystemService(android.hardware.display.DisplayManager::class.java).getDisplay(android.view.Display.DEFAULT_DISPLAY)
+        return (display?.rotation ?: android.view.Surface.ROTATION_0) * 90
     }
 
     private fun stopStreaming(userRequested: Boolean) {

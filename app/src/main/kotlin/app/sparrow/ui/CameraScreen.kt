@@ -19,6 +19,8 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -156,33 +158,31 @@ fun CameraScreen(
         }
     }
 
-    Row(Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(WindowInsets.safeDrawing)) {
-        Box(Modifier.weight(1f).fillMaxHeight()) {
-            // Viewfinder, letterboxed to the stream's aspect ratio; overlays stay inside the frame.
+    BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(WindowInsets.safeDrawing)) {
+        val portrait = maxHeight > maxWidth
+        // The stream is upright for the way the phone is held, so the frame follows the screen.
+        val frameAspect = if (portrait) profile.video.height.toFloat() / profile.video.width else profile.video.width.toFloat() / profile.video.height
+
+        val frame: @Composable (Modifier) -> Unit = { m ->
             Box(
-                Modifier
-                    .align(Alignment.Center)
-                    .fillMaxHeight()
-                    .aspectRatio(profile.video.width.toFloat() / profile.video.height, matchHeightConstraintsFirst = true)
-                    .clip(RoundedCornerShape(4.dp))
-                    .pointerInput(zoomRange) {
-                        detectTransformGestures { _, _, scale, _ ->
-                            val current = StreamController.zoom.value ?: profile.video.zoomRatio
-                            StreamController.setZoom((current * scale).coerceIn(zoomRange))
-                        }
-                    },
+                m.clip(RoundedCornerShape(4.dp)).pointerInput(zoomRange) {
+                    detectTransformGestures { _, _, scale, _ ->
+                        val current = StreamController.zoom.value ?: profile.video.zoomRatio
+                        StreamController.setZoom((current * scale).coerceIn(zoomRange))
+                    }
+                },
             ) {
                 if (hasCameraPermission) {
                     viewfinder(profile, idlePreview)
                 } else {
-                    PermissionPrompt(onRequestPermissions, Modifier.align(Alignment.Center))
+                    PermissionPrompt(onRequestPermissions, Modifier.align(Alignment.Center).padding(24.dp))
                 }
                 // Top and bottom scrims keep overlays legible on bright scenes.
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Scrim, 0.25f to Color.Transparent, 0.75f to Color.Transparent, 1f to Scrim)))
 
                 Box(Modifier.fillMaxSize().padding(14.dp)) {
                     TopLeftCluster(status, profile, all, enabled = !status.running, onSelect = { profiles.select(it) }, onNavigate = onNavigate)
-                    InfoChips(status, profile, Modifier.align(Alignment.TopEnd))
+                    InfoChips(status, profile, stacked = portrait, modifier = Modifier.align(Alignment.TopEnd))
                     if (hasCameraPermission && zoomRange.endInclusive > zoomRange.start + 0.01) {
                         ZoomPresets(zoom, zoomRange, onZoom = { StreamController.setZoom(it) }, modifier = Modifier.align(Alignment.BottomCenter))
                     }
@@ -190,23 +190,45 @@ fun CameraScreen(
                         AnimatedVisibility(showStats, enter = fadeIn(), exit = fadeOut()) { StatsPanel(status, profile) }
                         RailButton(Icons.Outlined.Info, "Stream details", selected = showStats) { showStats = !showStats }
                     }
-                    Banner(status, showBanner, onDismiss = { showBanner = false; onDismissInterrupted() }, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
+                    Banner(
+                        status, showBanner, onDismiss = { showBanner = false; onDismissInterrupted() },
+                        Modifier.align(Alignment.TopCenter).padding(top = if (portrait) 112.dp else 56.dp),
+                    )
                 }
             }
         }
 
-        ControlRail(
-            status = status,
-            pending = startPending,
-            onRecord = {
-                if (status.running) onStop() else if (!startPending) {
-                    if (hasCameraPermission) startPending = true else onRequestPermissions()
+        val controls: @Composable (Modifier) -> Unit = { m ->
+            ControlBar(
+                vertical = !portrait,
+                status = status,
+                pending = startPending,
+                onRecord = {
+                    if (status.running) onStop() else if (!startPending) {
+                        if (hasCameraPermission) startPending = true else onRequestPermissions()
+                    }
+                },
+                onSettings = { onNavigate(Screen.Settings) },
+                onNavigate = onNavigate,
+                modifier = m,
+            )
+        }
+
+        if (portrait) {
+            Column(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    frame(Modifier.align(Alignment.Center).fillMaxWidth().aspectRatio(frameAspect))
                 }
-            },
-            onSettings = { onNavigate(Screen.Settings) },
-            onNavigate = onNavigate,
-            modifier = Modifier.padding(vertical = 16.dp),
-        )
+                controls(Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 18.dp))
+            }
+        } else {
+            Row(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(1f).fillMaxHeight()) {
+                    frame(Modifier.align(Alignment.Center).fillMaxHeight().aspectRatio(frameAspect, matchHeightConstraintsFirst = true))
+                }
+                controls(Modifier.fillMaxHeight().width(104.dp).padding(vertical = 16.dp))
+            }
+        }
     }
 }
 
@@ -368,8 +390,8 @@ private fun formatDuration(ms: Long): String {
 // --- Top right: compact readouts ---------------------------------------------------------------
 
 @Composable
-private fun InfoChips(status: StreamStatus, profile: Profile, modifier: Modifier) {
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+private fun InfoChips(status: StreamStatus, profile: Profile, stacked: Boolean, modifier: Modifier) {
+    val content: @Composable () -> Unit = {
         if (status.running) {
             if (status.link == LinkState.Live) {
                 Chip(formatRate(status.sendKbps))
@@ -385,6 +407,11 @@ private fun InfoChips(status: StreamStatus, profile: Profile, modifier: Modifier
             val v = profile.video
             Chip("${v.height}p${v.fps} · ${if (v.codec.name == "H265") "HEVC" else "H.264"} · ${formatRate(v.bitrateKbps.toDouble())}")
         }
+    }
+    if (stacked) {
+        Column(modifier, horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) { content() }
+    } else {
+        Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp)) { content() }
     }
 }
 
@@ -437,8 +464,10 @@ private fun formatZoom(z: Double): String = if (z < 1 || z % 1.0 > 0.05) "%.1f".
 
 // --- Right rail: settings · record · menu -------------------------------------------------------
 
+/** Settings · record · menu: a vertical rail in landscape, a bottom bar in portrait. */
 @Composable
-private fun ControlRail(
+private fun ControlBar(
+    vertical: Boolean,
     status: StreamStatus,
     pending: Boolean,
     onRecord: () -> Unit,
@@ -446,22 +475,29 @@ private fun ControlRail(
     onNavigate: (Screen) -> Unit,
     modifier: Modifier,
 ) {
-    Column(
-        modifier.fillMaxHeight().width(104.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween,
-    ) {
+    val settings: @Composable () -> Unit = {
         RailButton(Icons.Outlined.Settings, if (status.running) "Settings (stop the stream to edit)" else "Settings", enabled = !status.running, onClick = onSettings)
-        RecordButton(status, pending, onRecord)
-        var menu by remember { mutableStateOf(false) }
+    }
+    val record: @Composable () -> Unit = { RecordButton(status, pending, onRecord) }
+    val menu: @Composable () -> Unit = {
+        var open by remember { mutableStateOf(false) }
         Box {
-            RailButton(Icons.Default.MoreVert, "More") { menu = true }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text("Profiles") }, onClick = { menu = false; onNavigate(Screen.Profiles) })
-                DropdownMenuItem(text = { Text("KLV inspector") }, onClick = { menu = false; onNavigate(Screen.Inspector) })
-                DropdownMenuItem(text = { Text("Log") }, onClick = { menu = false; onNavigate(Screen.Log) })
-                DropdownMenuItem(text = { Text("Setup guide") }, onClick = { menu = false; onNavigate(Screen.Onboarding) })
+            RailButton(Icons.Default.MoreVert, "More") { open = true }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                DropdownMenuItem(text = { Text("Profiles") }, onClick = { open = false; onNavigate(Screen.Profiles) })
+                DropdownMenuItem(text = { Text("KLV inspector") }, onClick = { open = false; onNavigate(Screen.Inspector) })
+                DropdownMenuItem(text = { Text("Log") }, onClick = { open = false; onNavigate(Screen.Log) })
+                DropdownMenuItem(text = { Text("Setup guide") }, onClick = { open = false; onNavigate(Screen.Onboarding) })
             }
+        }
+    }
+    if (vertical) {
+        Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
+            settings(); record(); menu()
+        }
+    } else {
+        Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            settings(); record(); menu()
         }
     }
 }

@@ -121,6 +121,12 @@ class VideoEncoder(
     }.getOrDefault(false)
 
     companion object {
+        /** True if a hardware encoder for [mime] accepts [width]×[height] (portrait sizes are not universal). */
+        fun supportsSize(mime: String, width: Int, height: Int): Boolean = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
+            info.isEncoder && info.isHardwareAccelerated && info.supportedTypes.any { it.equals(mime, ignoreCase = true) } &&
+                runCatching { info.getCapabilitiesForType(mime).videoCapabilities!!.isSizeSupported(width, height) }.getOrDefault(false)
+        }
+
         fun supports(mime: String): Boolean = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
             info.isEncoder && info.isHardwareAccelerated && info.supportedTypes.any { it.equals(mime, ignoreCase = true) }
         }

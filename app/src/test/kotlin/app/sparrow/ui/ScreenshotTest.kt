@@ -98,13 +98,13 @@ class ScreenshotTest {
     @Test
     fun mainNoPermission() = shot("09-main-permission") { Camera(permission = false) }
 
-    private fun setLive() {
+    private fun setLive(resolution: String = "1280×720 H264") {
         StreamController.update {
             StreamStatus(
                 link = LinkState.Live, running = true, profileName = "Field team",
                 targetKbps = 4000, sendKbps = 3912.0, rttMs = 48.0, lossPercent = 0.2,
                 gnss = GnssStatus(hasFix = true, accuracyM = 3.8f, ageMs = 400, usingGnssTime = true),
-                resolution = "1280×720 H264", zoomRange = 1.0..8.0,
+                resolution = resolution, zoomRange = 1.0..8.0,
                 liveSinceMs = SystemClock.elapsedRealtime() - 754_000,
             )
         }
@@ -121,6 +121,24 @@ class ScreenshotTest {
     fun mainDetails() {
         setLive()
         shot("10-main-details") { Camera(stats = true) }
+    }
+
+    @Test
+    @Config(qualifiers = "w400dp-h880dp-port-night-xxhdpi")
+    fun mainIdlePortrait() = shot("11-portrait-idle") { Camera() }
+
+    @Test
+    @Config(qualifiers = "w400dp-h880dp-port-night-xxhdpi")
+    fun mainLivePortrait() {
+        setLive("720×1280 H264")
+        shot("12-portrait-live") { Camera() }
+    }
+
+    @Test
+    @Config(qualifiers = "w400dp-h880dp-port-night-xxhdpi")
+    fun mainDetailsPortrait() {
+        setLive("720×1280 H264")
+        shot("13-portrait-details") { Camera(stats = true) }
     }
 
     @Test

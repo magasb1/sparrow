@@ -12,9 +12,16 @@ Rendered on the JVM from the real Compose screens with sample data; a drawn skyl
 the camera feed. Regenerate with `./gradlew :app:testDebugUnitTest`; the PNGs land in
 `docs/screenshots/`.
 
-The main screen works like a camera app in landscape: the viewfinder shows exactly the streamed
-frame, the record button sits on its own rail with settings above and the menu below, and status,
-profile and link readouts overlay the frame. Pinch or tap a preset to zoom.
+The main screen works like a camera app in both orientations. The viewfinder shows exactly the
+streamed frame: the stream is upright for the way the phone is held at Go live (1280×720 in
+landscape, 720×1280 in portrait, rotated on the GPU), and the screen stays locked to that
+orientation until Stop. Settings, the record button and the menu sit on a rail in landscape and a
+bottom bar in portrait; status, profile and link readouts overlay the frame. Pinch or tap a preset
+to zoom.
+
+| Portrait · ready | Portrait · live | Portrait · details |
+| --- | --- | --- |
+| <img src="docs/screenshots/11-portrait-idle.png" width="250"> | <img src="docs/screenshots/12-portrait-live.png" width="250"> | <img src="docs/screenshots/13-portrait-details.png" width="250"> |
 
 | Ready to go live | Live |
 | --- | --- |
@@ -129,6 +136,9 @@ Known gaps and notes:
   including asynchronous ones that carry none, so async KLV loses its first 5 bytes there.
   FFmpeg 7 fixed this; synchronous carriage (the default) works with both.
 * The FOV ignores the small crop added by electronic stabilisation.
+* Portrait and reverse-landscape streams go through a GPU rotation stage (`RotatingRenderer`);
+  its direction and the matching KLV attitude are unit-tested as math only and need checking on
+  a device.
 * SRT data produced while the link is down is dropped, not buffered.
 
 ## Open questions (from the SRS)

@@ -2,7 +2,10 @@ package app.sparrow.stream
 
 import android.content.Context
 import android.os.Environment
+import android.util.Size
 import app.sparrow.core.config.Profile
+import app.sparrow.core.geo.LensFacing
+import app.sparrow.core.geo.StreamOrientation
 import app.sparrow.core.klv.ComposerSettings
 import app.sparrow.core.klv.MetadataComposer
 import app.sparrow.core.klv.St0601Encoder
@@ -29,6 +32,8 @@ import java.util.concurrent.TimeUnit
 class StreamPipeline(
     private val context: Context,
     private val profile: Profile,
+    /** Display rotation (0/90/180/270) when Go live was pressed; the stream is upright for it. */
+    private val displayRotationDeg: Int,
     private val onFatalError: (String) -> Unit,
 ) {
     private val sensors = SensorHub(context)
@@ -38,8 +43,20 @@ class StreamPipeline(
             ?: all.firstOrNull()
             ?: error("No camera available")
     }
-    private val size = CameraInfo.chooseSize(cameraInfo.encoderSizes, profile.video.width, profile.video.height)
-    private val aspect = size.width.toDouble() / size.height
+    /** Camera buffer size, in sensor (landscape) orientation. */
+    private val cameraSize = CameraInfo.chooseSize(cameraInfo.encoderSizes, profile.video.width, profile.video.height)
+    private val sensorAspect = cameraSize.width.toDouble() / cameraSize.height
+    private val orientation = StreamOrientation.of(
+        cameraInfo.sensorOrientation, displayRotationDeg, cameraInfo.facing, cameraSize.width, cameraSize.height,
+    ).let { o ->
+        val mime = if (profile.video.codec == app.sparrow.core.ts.VideoCodec.H265) "video/hevc" else "video/avc"
+        if (o.rotationDeg != 0 && !VideoEncoder.supportsSize(mime, o.width, o.height)) {
+            AppLog.w("Encoder cannot do ${o.width}x${o.height}; streaming in sensor orientation")
+            StreamOrientation.of(cameraInfo.sensorOrientation, cameraInfo.sensorOrientation, LensFacing.BACK, cameraSize.width, cameraSize.height)
+        } else o
+    }
+    private val size = Size(orientation.width, orientation.height)
+    private var renderer: RotatingRenderer? = null
 
     private val composer = MetadataComposer(
         ComposerSettings(
@@ -130,7 +147,12 @@ class StreamPipeline(
         if (profile.advanced.recordLocally) recorder = openRecording()
         sensors.start()
         encoder.start()
-        camera.start(encoder.inputSurface)
+        val cameraTarget = if (orientation.rotationDeg == 0) encoder.inputSurface else {
+            RotatingRenderer(
+                encoder.inputSurface, cameraSize.width, cameraSize.height, orientation.rotationDeg, size.width, size.height,
+            ).also { renderer = it }.inputSurface
+        }
+        camera.start(cameraTarget)
         audio?.start()
         sender.start()
         scheduler.scheduleWithFixedDelay({ muxer.tick(SensorHub.nowUs()) }, 10, 10, TimeUnit.MILLISECONDS)
@@ -140,6 +162,7 @@ class StreamPipeline(
                 profileName = profile.name,
                 targetKbps = profile.video.bitrateKbps,
                 resolution = "${size.width}×${size.height} ${encoder.codec}",
+                displayRotationDeg = displayRotationDeg,
                 recordingPath = recordingFile?.absolutePath,
             )
         }
@@ -147,10 +170,6 @@ class StreamPipeline(
 
     fun setPreview(target: PreviewTarget?) = camera.setPreview(target?.takeIf { it.surface.isValid })
 
-    /** Width / height of the streamed image, for sizing the preview. */
-    val previewAspect: Double get() = aspect
-
-    val previewSizes get() = cameraInfo.previewSizes
 
     fun setZoom(ratio: Double) = camera.setZoom(ratio)
 
@@ -169,6 +188,7 @@ class StreamPipeline(
         runCatching { audio?.stop() }
         // The camera must stop writing into the encoder surface before the encoder is released.
         runCatching { camera.close() }
+        runCatching { renderer?.release() }
         runCatching { encoder.release() }
         runCatching { sensors.stop() }
         runCatching { muxer.flush() }
@@ -188,12 +208,14 @@ class StreamPipeline(
     }
 
     private fun writeKlv(captureUs: Long, now: Long) {
-        val (hfov, vfov) = cameraInfo.fieldOfView(aspect, camera.zoomRatio)
+        // FOV in sensor orientation, then swapped if the stream is turned on its side.
+        val (sensorH, sensorV) = cameraInfo.fieldOfView(sensorAspect, camera.zoomRatio)
+        val (hfov, vfov) = if (orientation.swapsAxes) sensorV to sensorH else sensorH to sensorV
         val metadata = composer.compose(
             timestampUtcMicros = sensors.utcMicros(captureUs),
             captureUs = captureUs,
             fix = sensors.latestFix,
-            pose = sensors.poseAt(captureUs, cameraInfo.facing, cameraInfo.sensorOrientation),
+            pose = sensors.poseAt(captureUs, cameraInfo.facing, orientation.remainingSensorRotationDeg),
             horizontalFovDeg = hfov,
             verticalFovDeg = vfov,
         )

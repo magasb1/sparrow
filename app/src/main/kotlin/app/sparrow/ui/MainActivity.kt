@@ -23,8 +23,10 @@ enum class Screen { Main, Settings, Profiles, Inspector, Log, Onboarding }
 class MainActivity : ComponentActivity() {
     private val app get() = SparrowApp.get(this)
     private var pendingStart = false
+    private var cameraGranted by mutableStateOf(false)
 
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        refreshPermissions()
         if (pendingStart) {
             pendingStart = false
             val denied = result.filterValues { !it }.keys
@@ -53,10 +55,12 @@ class MainActivity : ComponentActivity() {
                             screen = Screen.Main
                         },
                     )
-                    Screen.Main -> MainScreen(
+                    Screen.Main -> CameraScreen(
                         profiles = app.profiles,
+                        hasCameraPermission = cameraGranted,
                         interrupted = app.interruptedSession,
                         onDismissInterrupted = { app.acknowledgeInterruption() },
+                        onRequestPermissions = { requestPermissions(start = false) },
                         onStart = { requestPermissions(start = true) },
                         onStop = { StreamingService.stop(this) },
                         onNavigate = { screen = it },
@@ -68,6 +72,15 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshPermissions()
+    }
+
+    private fun refreshPermissions() {
+        cameraGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun requiredPermissions(): List<String> = buildList {

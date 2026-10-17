@@ -8,21 +8,33 @@ The requirements are in the *Sparrow – Product Description & SRS* document; re
 
 ## Screenshots
 
-Rendered on the JVM from the real Compose screens with sample data (the camera preview is black
-off-device). Regenerate with `./gradlew :app:testDebugUnitTest`; the PNGs land in
+Rendered on the JVM from the real Compose screens with sample data; a drawn skyline stands in for
+the camera feed. Regenerate with `./gradlew :app:testDebugUnitTest`; the PNGs land in
 `docs/screenshots/`.
 
-| Main · idle | Main · live | Main · reconnecting, no GNSS fix |
-| --- | --- | --- |
-| <img src="docs/screenshots/02-main-idle.png" width="240"> | <img src="docs/screenshots/03-main-live.png" width="240"> | <img src="docs/screenshots/04-main-reconnecting.png" width="240"> |
+The main screen works like a camera app in landscape: the viewfinder shows exactly the streamed
+frame, the record button sits on its own rail with settings above and the menu below, and status,
+profile and link readouts overlay the frame. Pinch or tap a preset to zoom.
 
-| First-run guide | Profiles | Log |
-| --- | --- | --- |
-| <img src="docs/screenshots/01-onboarding.png" width="240"> | <img src="docs/screenshots/06-profiles.png" width="240"> | <img src="docs/screenshots/08-log.png" width="240"> |
+| Ready to go live | Live |
+| --- | --- |
+| <img src="docs/screenshots/02-main-idle.png" width="420"> | <img src="docs/screenshots/03-main-live.png" width="420"> |
+
+| Stream details | Reconnecting, no GNSS fix |
+| --- | --- |
+| <img src="docs/screenshots/10-main-details.png" width="420"> | <img src="docs/screenshots/04-main-reconnecting.png" width="420"> |
+
+| Camera permission needed | First-run guide |
+| --- | --- |
+| <img src="docs/screenshots/09-main-permission.png" width="420"> | <img src="docs/screenshots/01-onboarding.png" width="420"> |
+
+| Profiles | Log |
+| --- | --- |
+| <img src="docs/screenshots/06-profiles.png" width="420"> | <img src="docs/screenshots/08-log.png" width="420"> |
 
 | KLV inspector | Settings (full length) |
 | --- | --- |
-| <img src="docs/screenshots/07-klv-inspector.png" width="240"> | <img src="docs/screenshots/05-settings.png" width="240"> |
+| <img src="docs/screenshots/07-klv-inspector.png" width="420"> | <img src="docs/screenshots/05-settings.png" width="420"> |
 
 ## Layout
 
@@ -105,7 +117,7 @@ verification against the acceptance criteria in the SRS.
 | SRT-1..3, SRT-5 caller/listener, options, reconnect, ABR | Implemented |
 | SRT-4 `srt://` URL / QR | Paste from clipboard and QR decoded from an image; live QR scanning not yet |
 | BG-1..6 foreground service, locks, notification, handover, onboarding, kill detection | Implemented |
-| UI-1..6 main screen, settings, profiles + JSON, inspector, log export, local recording | Implemented; preview shows only while streaming |
+| UI-1..6 camera-style main screen, settings, profiles + JSON, inspector, log export, local recording | Implemented |
 | NFR-5 Keystore passphrases, no telemetry | Implemented |
 | NFR-7 golden byte vectors | KLV, PAT and ADTS vectors in `core` tests |
 

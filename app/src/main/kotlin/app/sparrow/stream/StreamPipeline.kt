@@ -65,7 +65,10 @@ class StreamPipeline(
     private var stopped = false
 
     private val sender = SrtSender(profile.destination, object : SrtSender.Listener {
-        override fun onState(state: LinkState) = StreamController.update { it.copy(link = state) }
+        override fun onState(state: LinkState) = StreamController.update {
+            val since = if (state == LinkState.Live) it.liveSinceMs ?: android.os.SystemClock.elapsedRealtime() else null
+            it.copy(link = state, liveSinceMs = since)
+        }
 
         override fun onConnected() {
             // Let a new receiver start decoding straight away.

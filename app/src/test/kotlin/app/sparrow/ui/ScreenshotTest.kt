@@ -1,5 +1,6 @@
 package app.sparrow.ui
 
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
@@ -28,6 +29,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowBuild
 import java.io.File
+import android.os.SystemClock
 
 /**
  * Renders each screen with sample data and writes PNGs to docs/screenshots (see README).
@@ -35,7 +37,7 @@ import java.io.File
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(sdk = [35], qualifiers = "w400dp-h880dp-night-xxhdpi")
+@Config(sdk = [35], qualifiers = "w880dp-h400dp-land-night-xxhdpi")
 class ScreenshotTest {
     @get:Rule
     val compose = createComposeRule()
@@ -58,7 +60,10 @@ class ScreenshotTest {
     }
 
     @After
-    fun reset() = StreamController.reset()
+    fun reset() {
+        StreamController.reset()
+        StreamController.setZoom(1.0)
+    }
 
     private fun shot(name: String, content: @Composable () -> Unit) {
         compose.setContent { SparrowTheme { content() } }
@@ -72,24 +77,50 @@ class ScreenshotTest {
         shot("01-onboarding") { OnboardingScreen(onRequestPermissions = {}, onDone = {}) }
     }
 
-    @Test
-    fun mainIdle() = shot("02-main-idle") {
-        MainScreen(app.profiles, interrupted = false, onDismissInterrupted = {}, onStart = {}, onStop = {}, onNavigate = {})
-    }
+    @Composable
+    private fun Camera(interrupted: Boolean = false, permission: Boolean = true, stats: Boolean = false) = CameraScreen(
+        profiles = app.profiles,
+        hasCameraPermission = permission,
+        interrupted = interrupted,
+        onDismissInterrupted = {},
+        onRequestPermissions = {},
+        onStart = {},
+        onStop = {},
+        onNavigate = {},
+        zoomRangeOverride = 0.6..10.0,
+        initialShowStats = stats,
+        viewfinder = { _, _ -> SampleScene() },
+    )
 
     @Test
-    fun mainLive() {
+    fun mainIdle() = shot("02-main-idle") { Camera() }
+
+    @Test
+    fun mainNoPermission() = shot("09-main-permission") { Camera(permission = false) }
+
+    private fun setLive() {
         StreamController.update {
             StreamStatus(
                 link = LinkState.Live, running = true, profileName = "Field team",
                 targetKbps = 4000, sendKbps = 3912.0, rttMs = 48.0, lossPercent = 0.2,
                 gnss = GnssStatus(hasFix = true, accuracyM = 3.8f, ageMs = 400, usingGnssTime = true),
                 resolution = "1280×720 H264", zoomRange = 1.0..8.0,
+                liveSinceMs = SystemClock.elapsedRealtime() - 754_000,
             )
         }
-        shot("03-main-live") {
-            MainScreen(app.profiles, interrupted = false, onDismissInterrupted = {}, onStart = {}, onStop = {}, onNavigate = {})
-        }
+        StreamController.setZoom(2.0)
+    }
+
+    @Test
+    fun mainLive() {
+        setLive()
+        shot("03-main-live") { Camera() }
+    }
+
+    @Test
+    fun mainDetails() {
+        setLive()
+        shot("10-main-details") { Camera(stats = true) }
     }
 
     @Test
@@ -101,20 +132,18 @@ class ScreenshotTest {
                 gnss = GnssStatus(hasFix = false, ageMs = 12_000), resolution = "1280×720 H264",
             )
         }
-        shot("04-main-reconnecting") {
-            MainScreen(app.profiles, interrupted = true, onDismissInterrupted = {}, onStart = {}, onStop = {}, onNavigate = {})
-        }
+        shot("04-main-reconnecting") { Camera() }
     }
 
     @Test
-    @Config(qualifiers = "w400dp-h4300dp-night-xxhdpi")
+    @Config(qualifiers = "w880dp-h4300dp-land-night-xxhdpi")
     fun settings() = shot("05-settings") { SettingsScreen(app.profiles, onBack = {}) }
 
     @Test
     fun profilesScreen() = shot("06-profiles") { ProfilesScreen(app.profiles, onBack = {}) }
 
     @Test
-    @Config(qualifiers = "w400dp-h1560dp-night-xxhdpi")
+    @Config(qualifiers = "w880dp-h1300dp-land-night-xxhdpi")
     fun inspector() {
         val packet = St0601Encoder().encode(
             UasMetadata(
@@ -143,5 +172,35 @@ class ScreenshotTest {
         AppLog.i("Network changed; reconnecting SRT")
         AppLog.i("ABR: video bitrate → 3000 kbit/s")
         shot("08-log") { LogScreen(onBack = {}) }
+    }
+}
+
+/** Stand-in for the camera feed off-device: a dusk sky over a harbour skyline. */
+@Composable
+private fun SampleScene() {
+    androidx.compose.foundation.Canvas(androidx.compose.ui.Modifier.fillMaxSize()) {
+        val w = size.width
+        val h = size.height
+        drawRect(
+            androidx.compose.ui.graphics.Brush.verticalGradient(
+                0f to androidx.compose.ui.graphics.Color(0xFF3B5876),
+                0.55f to androidx.compose.ui.graphics.Color(0xFFD9A47A),
+                0.62f to androidx.compose.ui.graphics.Color(0xFF6E5A57),
+                1f to androidx.compose.ui.graphics.Color(0xFF1E2A30),
+            ),
+        )
+        val skyline = androidx.compose.ui.graphics.Color(0xFF26313A)
+        val buildings = listOf(0.00 to 0.40, 0.06 to 0.33, 0.11 to 0.45, 0.17 to 0.30, 0.24 to 0.38, 0.30 to 0.27, 0.37 to 0.42,
+            0.44 to 0.35, 0.52 to 0.24, 0.57 to 0.36, 0.64 to 0.31, 0.71 to 0.44, 0.78 to 0.29, 0.85 to 0.39, 0.92 to 0.33)
+        buildings.forEach { (x, top) ->
+            drawRect(skyline, topLeft = androidx.compose.ui.geometry.Offset((x * w).toFloat(), (top * h + 0.18f * h).toFloat()),
+                size = androidx.compose.ui.geometry.Size((0.065f * w), (0.62f - top.toFloat() - 0.18f) * h + 1))
+        }
+        drawRect(androidx.compose.ui.graphics.Color(0xFF203039), topLeft = androidx.compose.ui.geometry.Offset(0f, 0.62f * h),
+            size = androidx.compose.ui.geometry.Size(w, 0.38f * h))
+        repeat(9) { i ->
+            drawRect(androidx.compose.ui.graphics.Color(0x33F2C58F), topLeft = androidx.compose.ui.geometry.Offset(w * (0.08f + i * 0.1f), h * (0.66f + (i % 3) * 0.05f)),
+                size = androidx.compose.ui.geometry.Size(w * 0.05f, h * 0.006f))
+        }
     }
 }

@@ -138,7 +138,8 @@ class CameraSource(
     fun toCaptureUs(cameraUs: Long): Long = if (realtimeBase) cameraUs else cameraUs + monotonicOffsetUs
 
     @SuppressLint("MissingPermission")
-    fun start(encoderSurface: Surface) {
+    /** Opens the camera. [encoderSurface] is null for a preview-only session (framing before going live). */
+    fun start(encoderSurface: Surface?) {
         this.encoderSurface = encoderSurface
         val manager = context.getSystemService(CameraManager::class.java)
         opening = true
@@ -200,10 +201,10 @@ class CameraSource(
 
     private fun configure() {
         val camera = device ?: return
-        val encoder = encoderSurface ?: return
         session?.close()
         session = null
-        val targets = listOfNotNull(encoder, preview?.surface?.takeIf { it.isValid })
+        val targets = listOfNotNull(encoderSurface, preview?.surface?.takeIf { it.isValid })
+        if (targets.isEmpty()) return
         val outputs = targets.map { s ->
             OutputConfiguration(s).apply {
                 if (Build.VERSION.SDK_INT >= 33) timestampBase = OutputConfiguration.TIMESTAMP_BASE_REALTIME
@@ -221,7 +222,7 @@ class CameraSource(
 
             override fun onConfigureFailed(s: CameraCaptureSession) {
                 AppLog.e("Camera session configuration failed")
-                if (preview != null) {
+                if (preview != null && encoderSurface != null) {
                     // Some devices cannot add a preview stream at this size; keep streaming without it.
                     preview = null
                     configure()

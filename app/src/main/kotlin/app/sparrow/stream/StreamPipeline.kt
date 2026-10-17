@@ -4,6 +4,13 @@ import android.content.Context
 import android.os.Environment
 import android.util.Size
 import app.sparrow.core.config.Profile
+import app.sparrow.core.cv.TargetGeometry
+import app.sparrow.core.cv.TargetReport
+import app.sparrow.core.geo.CameraPose
+import app.sparrow.core.klv.LatLon
+import app.sparrow.core.klv.PositionFix
+import app.sparrow.core.klv.Vmti
+import app.sparrow.cv.DetectionEngine
 import app.sparrow.core.geo.LensFacing
 import app.sparrow.core.geo.StreamOrientation
 import app.sparrow.core.klv.ComposerSettings
@@ -56,6 +63,13 @@ class StreamPipeline(
         } else o
     }
     private val size = Size(orientation.width, orientation.height)
+
+    /** Object detection on a low-resolution copy of the stream; null if the camera has no matching YUV size. */
+    private val detector: DetectionEngine? = DetectionEngine.analysisSize(cameraInfo.yuvSizes, sensorAspect)?.let { analysis ->
+        DetectionEngine(context, profile.detection, orientation.rotationDeg, analysis, { camera.toCaptureUs(it) }) { stats ->
+            StreamController.update { it.copy(detection = stats) }
+        }
+    }
     private var renderer: RotatingRenderer? = null
 
     private val composer = MetadataComposer(
@@ -154,6 +168,7 @@ class StreamPipeline(
             ).also { renderer = it }.inputSurface
         }
         camera.start(cameraTarget)
+        setDetectionEnabled(profile.detection.enabled)
         audio?.start()
         sender.start()
         scheduler.scheduleWithFixedDelay({ muxer.tick(SensorHub.nowUs()) }, 10, 10, TimeUnit.MILLISECONDS)
@@ -174,6 +189,20 @@ class StreamPipeline(
 
     fun setZoom(ratio: Double) = camera.setZoom(ratio)
 
+    /** Turns detection on or off live; the analysis stream is only in the camera session while on. */
+    fun setDetectionEnabled(on: Boolean) {
+        val d = detector ?: return
+        if (d.enabled == on) return
+        d.enabled = on
+        if (!on) {
+            d.tracker.clear()
+            StreamController.publishTracks(emptyList())
+            StreamController.update { it.copy(detection = null) }
+        }
+        camera.setAnalysis(if (on) d.surface else null)
+        AppLog.i("Object detection ${if (on) "on" else "off"}")
+    }
+
     val zoomRange get() = cameraInfo.zoomRange
 
     fun onNetworkChanged() = sender.onNetworkChanged()
@@ -189,6 +218,7 @@ class StreamPipeline(
         runCatching { audio?.stop() }
         // The camera must stop writing into the encoder surface before the encoder is released.
         runCatching { camera.close() }
+        runCatching { detector?.release() }
         runCatching { renderer?.release() }
         runCatching { encoder.release() }
         runCatching { sensors.stop() }
@@ -201,6 +231,7 @@ class StreamPipeline(
         val captureUs = camera.toCaptureUs(cameraUs)
         val now = SensorHub.nowUs()
         muxer.writeVideo(captureUs, accessUnit, keyFrame, now)
+        detector?.takeIf { it.enabled }?.let { StreamController.publishTracks(it.snapshot(captureUs)) }
         // KLV samples are aligned to video frames so their PTS equals the frame's (NFR-2).
         // Samples land on the frame nearest each scheduled time, so the average rate is exact even
         // when it does not divide the frame rate (10 Hz at 15 fps).
@@ -215,20 +246,39 @@ class StreamPipeline(
         // FOV in sensor orientation, then swapped if the stream is turned on its side.
         val (sensorH, sensorV) = cameraInfo.fieldOfView(sensorAspect, camera.zoomRatio)
         val (hfov, vfov) = if (orientation.swapsAxes) sensorV to sensorH else sensorH to sensorV
+        val fix = sensors.latestFix
+        val pose = sensors.poseAt(captureUs, cameraInfo.facing, orientation.remainingSensorRotationDeg)
         val metadata = composer.compose(
             timestampUtcMicros = sensors.utcMicros(captureUs),
             captureUs = captureUs,
-            fix = sensors.latestFix,
-            pose = sensors.poseAt(captureUs, cameraInfo.facing, orientation.remainingSensorRotationDeg),
+            fix = fix,
+            pose = pose,
             horizontalFovDeg = hfov,
             verticalFovDeg = vfov,
-        )
+        ).let { m -> vmti(captureUs, fix, pose, hfov, vfov)?.let { m.copy(vmti = it) } ?: m }
         val packet = klvEncoder.encode(metadata)
         muxer.writeKlv(captureUs, packet, now)
         if (captureUs - lastInspectorUs > 250_000) {
             lastInspectorUs = captureUs
             StreamController.publishKlv(packet)
         }
+    }
+
+    /** ST 0903 VMTI for the tracks at this frame (KLV Tag 74), or null when detection is off. */
+    private fun vmti(captureUs: Long, fix: PositionFix?, pose: CameraPose?, hfov: Double, vfov: Double): ByteArray? {
+        val d = detector?.takeIf { it.enabled && profile.detection.sendVmti } ?: return null
+        val fresh = fix?.takeIf { captureUs - it.captureUs <= SensorHub.FIX_TIMEOUT_MS * 1000 }
+        val geometry = TargetGeometry(
+            sensor = fresh?.let { LatLon(it.latitude, it.longitude) },
+            sensorAltitude = fresh?.let { it.altitudeMsl ?: it.ellipsoidHeight },
+            groundElevation = profile.metadata.groundElevationM,
+            geoidSeparation = fresh?.let { f -> f.ellipsoidHeight?.let { hae -> f.altitudeMsl?.let { msl -> hae - msl } } },
+            pose = pose,
+            horizontalFov = hfov,
+            verticalFov = vfov,
+        )
+        val frame = TargetReport.vmti(d.snapshot(captureUs), d.tracker.lastDetectionCount, size.width, size.height, geometry)
+        return Vmti.encode(frame)
     }
 
     private fun publishStatus() {

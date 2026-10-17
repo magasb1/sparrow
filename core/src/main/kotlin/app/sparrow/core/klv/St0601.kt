@@ -34,6 +34,9 @@ sealed interface TagFormat {
 
     /** ISO 646 / UTF-8 text, up to 127 bytes. */
     data object Text : TagFormat
+
+    /** An embedded Local Set, written as given (Tag 74 VMTI). */
+    data object LocalSet : TagFormat
 }
 
 /** Tags Sparrow can emit. [optional] tags can be switched off per profile (KLV-5). */
@@ -60,6 +63,8 @@ enum class Tag(val id: Int, val label: String, val format: TagFormat, val option
     FRAME_CENTER_ELEVATION(25, "Frame Center Elevation", TagFormat.UMapped(2, -900.0, 19000.0), optional = true, unit = "m"),
     PLATFORM_CALL_SIGN(59, "Platform Call Sign", TagFormat.Text, optional = true),
     UAS_LS_VERSION(65, "UAS Datalink LS Version", TagFormat.UInt(1), optional = false),
+    /** ST 0903 VMTI; sent whenever object detection is on, so not part of the tag selection. */
+    VMTI_LOCAL_SET(74, "VMTI Local Set", TagFormat.LocalSet, optional = false),
     SENSOR_ELLIPSOID_HEIGHT(75, "Sensor Ellipsoid Height", TagFormat.UMapped(2, -900.0, 19000.0), optional = true, unit = "m"),
     CORNER_LAT_1(82, "Corner Latitude Point 1", TagFormat.SMapped(4, 180.0), optional = true, unit = "°"),
     CORNER_LON_1(83, "Corner Longitude Point 1", TagFormat.SMapped(4, 360.0), optional = true, unit = "°"),

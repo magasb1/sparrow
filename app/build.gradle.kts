@@ -38,6 +38,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    androidResources {
+        // Memory-map-friendly and faster to load than inflating 34 MB at start.
+        noCompress += "onnx"
+    }
+
     buildFeatures {
         compose = true
     }
@@ -85,6 +90,7 @@ dependencies {
     implementation(libs.compose.material.icons)
     implementation(libs.srtdroid.core)
     implementation(libs.zxing.core)
+    implementation(libs.onnxruntime.android)
     debugImplementation(libs.compose.ui.tooling)
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)

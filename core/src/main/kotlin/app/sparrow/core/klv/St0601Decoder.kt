@@ -6,6 +6,7 @@ data class DecodedItem(val tagId: Int, val tag: Tag?, val raw: ByteArray, val va
         get() = when (value) {
             null -> if (tag == null) raw.joinToString("") { "%02X".format(it) } else "out of range"
             is Double -> "%.7f".format(value).trimEnd('0').trimEnd('.') + (tag?.unit?.let { " $it" } ?: "")
+            is VmtiFrame -> "${value.targets.size} of ${value.totalTargets} targets"
             else -> value.toString()
         }
 
@@ -64,5 +65,6 @@ object St0601Decoder {
         is TagFormat.Text -> raw.toString(Charsets.UTF_8)
         is TagFormat.UMapped -> TagMapping.decodeUnsigned(f, readUnsigned(raw))
         is TagFormat.SMapped -> TagMapping.decodeSigned(f, readUnsigned(raw))
+        is TagFormat.LocalSet -> if (tag == Tag.VMTI_LOCAL_SET) runCatching { Vmti.decode(raw) }.getOrNull() else null
     }
 }

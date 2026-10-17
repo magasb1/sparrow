@@ -40,6 +40,8 @@ data class StreamStatus(
     val liveSinceMs: Long? = null,
     /** Display rotation the stream was started in; the UI stays locked to it while running. */
     val displayRotationDeg: Int? = null,
+    /** Detector figures while detection runs; null when it is off. */
+    val detection: app.sparrow.cv.DetectionStats? = null,
 )
 
 data class PreviewTarget(val surface: Surface, val width: Int, val height: Int)
@@ -66,6 +68,22 @@ object StreamController {
         _zoom.value = ratio
     }
 
+    private val _tracks = MutableStateFlow<List<app.sparrow.core.cv.TrackedObject>>(emptyList())
+    /** Confirmed tracks at the latest video frame, in normalised stream-image coordinates. */
+    val tracks: StateFlow<List<app.sparrow.core.cv.TrackedObject>> = _tracks.asStateFlow()
+
+    private val _detectionToggles = kotlinx.coroutines.flow.MutableSharedFlow<Boolean>(extraBufferCapacity = 4)
+    /** Detection switched on or off from the UI during a stream (the profile is saved too). */
+    val detectionToggles: kotlinx.coroutines.flow.SharedFlow<Boolean> = _detectionToggles
+
+    fun setDetectionEnabled(on: Boolean) {
+        _detectionToggles.tryEmit(on)
+    }
+
+    internal fun publishTracks(tracks: List<app.sparrow.core.cv.TrackedObject>) {
+        if (tracks.isNotEmpty() || _tracks.value.isNotEmpty()) _tracks.value = tracks
+    }
+
     internal fun update(block: (StreamStatus) -> StreamStatus) = _status.update(block)
 
     internal fun publishKlv(packet: ByteArray) {
@@ -74,6 +92,7 @@ object StreamController {
 
     internal fun reset() {
         _status.value = StreamStatus()
+        _tracks.value = emptyList()
     }
 
     fun attachPreview(target: PreviewTarget) {

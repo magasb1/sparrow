@@ -41,6 +41,8 @@ data class CameraInfo(
     val realtimeTimestamps: Boolean,
     val encoderSizes: List<Size>,
     val previewSizes: List<Size>,
+    /** YUV_420_888 sizes, for the analysis stream that feeds object detection. */
+    val yuvSizes: List<Size>,
     val fpsRanges: List<Range<Int>>,
     val label: String,
 ) {
@@ -88,6 +90,7 @@ data class CameraInfo(
                     CameraMetadata.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME,
                 encoderSizes = map.getOutputSizes(MediaCodec::class.java)?.toList().orEmpty(),
                 previewSizes = map.getOutputSizes(SurfaceHolder::class.java)?.toList().orEmpty(),
+                yuvSizes = map.getOutputSizes(android.graphics.ImageFormat.YUV_420_888)?.toList().orEmpty(),
                 fpsRanges = c.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList().orEmpty(),
                 label = "${facing.name.lowercase().replaceFirstChar { it.uppercase() }} camera $id " +
                     "(%.1f mm, %.0f° HFOV)".format(focal, FrameGeometry.fieldOfView(activeWmm, focal.toDouble())),
@@ -122,6 +125,10 @@ class CameraSource(
     private var session: CameraCaptureSession? = null
     private var encoderSurface: Surface? = null
     private var preview: PreviewTarget? = null
+    private var analysis: Surface? = null
+    /** Set when the device rejected the analysis stream; detection is then unavailable. */
+    @Volatile var analysisUnsupported = false
+        private set
     @Volatile private var closed = false
     @Volatile private var opening = false
     private val deviceClosed = java.util.concurrent.CountDownLatch(1)
@@ -192,6 +199,17 @@ class CameraSource(
         if (target == null && Thread.currentThread() != thread) done.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
 
+    /** Adds or removes the low-resolution analysis output (object detection). */
+    fun setAnalysis(surface: Surface?) {
+        handler.post {
+            val target = surface.takeUnless { analysisUnsupported }
+            if (analysis != target) {
+                analysis = target
+                configure()
+            }
+        }
+    }
+
     fun setZoom(ratio: Double) {
         handler.post {
             zoomRatio = ratio.coerceIn(info.zoomRange)
@@ -203,7 +221,7 @@ class CameraSource(
         val camera = device ?: return
         session?.close()
         session = null
-        val targets = listOfNotNull(encoderSurface, preview?.surface?.takeIf { it.isValid })
+        val targets = listOfNotNull(encoderSurface, preview?.surface?.takeIf { it.isValid }, analysis)
         if (targets.isEmpty()) return
         val outputs = targets.map { s ->
             OutputConfiguration(s).apply {
@@ -222,7 +240,13 @@ class CameraSource(
 
             override fun onConfigureFailed(s: CameraCaptureSession) {
                 AppLog.e("Camera session configuration failed")
-                if (preview != null && encoderSurface != null) {
+                if (analysis != null) {
+                    // Three streams are too many for some cameras: give up detection first.
+                    AppLog.w("Camera cannot add the analysis stream; object detection disabled")
+                    analysis = null
+                    analysisUnsupported = true
+                    configure()
+                } else if (preview != null && encoderSurface != null) {
                     // Some devices cannot add a preview stream at this size; keep streaming without it.
                     preview = null
                     configure()

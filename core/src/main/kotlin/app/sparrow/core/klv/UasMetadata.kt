@@ -33,4 +33,6 @@ data class UasMetadata(
     val frameCenterElevation: Double? = null,
     /** Upper-left, upper-right, lower-right, lower-left, as ST 0601 numbers corners 1–4. */
     val corners: List<LatLon>? = null,
+    /** Encoded ST 0903 VMTI Local Set for Tag 74. */
+    val vmti: ByteArray? = null,
 )

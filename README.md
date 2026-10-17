@@ -43,6 +43,28 @@ to zoom.
 | --- | --- |
 | <img src="docs/screenshots/07-klv-inspector.png" width="420"> | <img src="docs/screenshots/05-settings.png" width="420"> |
 
+| Object detection · landscape | Object detection · portrait with details |
+| --- | --- |
+| <img src="docs/screenshots/14-detections.png" width="420"> | <img src="docs/screenshots/15-detections-portrait.png" width="250"> |
+
+## Object detection
+
+Optional, per profile, and switchable live with the target button on the viewfinder.
+
+* **Model:** [RF-DETR Nano](https://github.com/roboflow/rf-detr) (Apache-2.0), exported to ONNX and
+  INT8-quantised (34 MB, `tools/export_rfdetr.py`), run with ONNX Runtime (XNNPACK) on the phone.
+  Nothing leaves the device but the stream.
+* **Input:** a third, low-resolution YUV stream from the camera (same field of view as the video),
+  rotated into the stream's orientation, analysed at 2–8 Hz.
+* **Tracking:** constant-velocity tracker with stable ids; boxes are extrapolated to every frame.
+* **KLV:** confirmed tracks go out as MISB ST 0903 VMTI in ST 0601 Tag 74 — pixel boxes, centroid,
+  confidence, history, COCO class (VObject) and the ground position of each target's base when
+  GNSS and attitude allow.
+* **Default classes:** people, bicycles, cars, motorcycles, aircraft, buses, trains, trucks, boats.
+
+`RfDetrModelTest` runs the shipped model in a JVM test with the app's own Kotlin pre- and
+post-processing (ARGB and YUV paths, plus the portrait rotation) on COCO images.
+
 ## Layout
 
 | Module | What it holds |
@@ -154,6 +176,9 @@ Known gaps and notes:
   including asynchronous ones that carry none, so async KLV loses its first 5 bytes there.
   FFmpeg 7 fixed this; synchronous carriage (the default) works with both.
 * The FOV ignores the small crop added by electronic stabilisation.
+* ST 0903 VMTI is written from the standard's structure as remembered (tags 3–12, 101; VTarget
+  1–3, 5, 6, 17, 102); validate it against the customer's VMTI-capable receiver.
+* Some cameras cannot run a third (analysis) stream; detection then switches itself off.
 * Portrait and reverse-landscape streams go through a GPU rotation stage (`RotatingRenderer`);
   its direction and the matching KLV attitude are unit-tested as math only and need checking on
   a device.

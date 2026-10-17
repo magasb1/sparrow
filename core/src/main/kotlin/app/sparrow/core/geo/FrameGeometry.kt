@@ -63,6 +63,29 @@ object FrameGeometry {
         )
     }
 
+    /**
+     * Ground point seen at normalised image position ([nx], [ny]) (0..1, y down), or null if that
+     * ray does not reach the ground. Used to place detected targets.
+     */
+    fun groundPoint(
+        sensor: LatLon,
+        sensorAltitude: Double,
+        groundElevation: Double,
+        pose: CameraPose,
+        horizontalFovDeg: Double,
+        verticalFovDeg: Double,
+        nx: Double,
+        ny: Double,
+    ): LatLon? {
+        val height = sensorAltitude - groundElevation
+        if (height <= 0) return null
+        val tanH = tan(Math.toRadians(horizontalFovDeg / 2))
+        val tanV = tan(Math.toRadians(verticalFovDeg / 2))
+        val ray = (pose.forward + pose.right * ((2 * nx - 1) * tanH) - pose.up * ((2 * ny - 1) * tanV)).normalized()
+        if (ray.z > -MIN_DOWN_COMPONENT) return null
+        return offset(sensor, ray * (height / -ray.z))
+    }
+
     /** Moves [origin] by an East-North offset in metres on the WGS84 ellipsoid. */
     fun offset(origin: LatLon, enu: Vec3): LatLon {
         val lat = Math.toRadians(origin.lat)

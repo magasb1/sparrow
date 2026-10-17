@@ -149,3 +149,13 @@ class TsMuxerTest {
         assertArrayEquals(idr(9000).copyOfRange(4, 9005), video[0].payload.copyOfRange(video[0].payload.size - 9001, video[0].payload.size))
     }
 }
+
+class AdtsTest {
+    @Test
+    fun `ADTS header for 48 kHz mono`() {
+        val f = Adts.frame(ByteArray(100), sampleRate = 48000, channels = 1)
+        // FFF1, LC, index 3, 1 channel, frame length 107, buffer fullness 0x7FF, 1 raw block.
+        assertEquals("FFF14C400D7FFC", f.copyOf(7).toHex())
+        assertEquals(107, f.size)
+    }
+}

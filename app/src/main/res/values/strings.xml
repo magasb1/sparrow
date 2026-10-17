@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Sparrow</string>
+    <string name="channel_stream">Streaming</string>
+    <string name="channel_alerts">Alerts</string>
+</resources>

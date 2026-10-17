@@ -42,6 +42,7 @@ class StreamingService : LifecycleService() {
     private var notificationJob: Job? = null
     private var previewJob: Job? = null
     private var zoomJob: Job? = null
+    private var detectionJob: Job? = null
     private val main = Handler(Looper.getMainLooper())
     private var restarts = ArrayDeque<Long>()
     private var stopping = false
@@ -112,6 +113,9 @@ class StreamingService : LifecycleService() {
         zoomJob = lifecycleScope.launch {
             StreamController.zoom.collect { z -> z?.let { pipeline?.setZoom(it) } }
         }
+        detectionJob = lifecycleScope.launch {
+            StreamController.detectionToggles.collect { on -> pipeline?.setDetectionEnabled(on) }
+        }
     }
 
     private fun launchPipeline() {
@@ -166,6 +170,7 @@ class StreamingService : LifecycleService() {
         notificationJob?.cancel()
         previewJob?.cancel()
         zoomJob?.cancel()
+        detectionJob?.cancel()
         main.removeCallbacksAndMessages(null)
         pipeline?.stop()
         pipeline = null

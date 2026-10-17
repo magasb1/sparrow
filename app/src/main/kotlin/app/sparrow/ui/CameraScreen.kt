@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.GpsNotFixed
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.CenterFocusStrong
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Videocam
@@ -125,6 +126,8 @@ fun CameraScreen(
             ?: 1.0..1.0
     }
     val requestedZoom by StreamController.zoom.collectAsStateWithLifecycle()
+    val tracks by StreamController.tracks.collectAsStateWithLifecycle()
+    val detectionOn = profile.detection.enabled
     val zoom = (requestedZoom ?: profile.video.zoomRatio).coerceIn(zoomRange)
 
     var startPending by remember { mutableStateOf(false) }
@@ -174,6 +177,7 @@ fun CameraScreen(
             ) {
                 if (hasCameraPermission) {
                     viewfinder(profile, idlePreview)
+                    if (detectionOn && status.running) DetectionOverlay(tracks)
                 } else {
                     PermissionPrompt(onRequestPermissions, Modifier.align(Alignment.Center).padding(24.dp))
                 }
@@ -182,13 +186,24 @@ fun CameraScreen(
 
                 Box(Modifier.fillMaxSize().padding(14.dp)) {
                     TopLeftCluster(status, profile, all, enabled = !status.running, onSelect = { profiles.select(it) }, onNavigate = onNavigate)
-                    InfoChips(status, profile, stacked = portrait, modifier = Modifier.align(Alignment.TopEnd))
-                    if (hasCameraPermission && zoomRange.endInclusive > zoomRange.start + 0.01) {
-                        ZoomPresets(zoom, zoomRange, onZoom = { StreamController.setZoom(it) }, modifier = Modifier.align(Alignment.BottomCenter))
+                    InfoChips(status, profile, tracks.size.takeIf { detectionOn }, stacked = portrait, modifier = Modifier.align(Alignment.TopEnd))
+                    if (hasCameraPermission && zoomRange.endInclusive > zoomRange.start + 0.01 && !(portrait && showStats)) {
+                        ZoomPresets(
+                            zoom, zoomRange, onZoom = { StreamController.setZoom(it) },
+                            // Portrait is too narrow for the zoom pill beside the two buttons.
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = if (portrait) 62.dp else 0.dp),
+                        )
                     }
                     Column(Modifier.align(Alignment.BottomStart), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         AnimatedVisibility(showStats, enter = fadeIn(), exit = fadeOut()) { StatsPanel(status, profile) }
-                        RailButton(Icons.Outlined.Info, "Stream details", selected = showStats) { showStats = !showStats }
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            RailButton(Icons.Outlined.Info, "Stream details", selected = showStats) { showStats = !showStats }
+                            RailButton(Icons.Outlined.CenterFocusStrong, if (detectionOn) "Turn object detection off" else "Turn object detection on", selected = detectionOn) {
+                                val on = !detectionOn
+                                profiles.save(profile.copy(detection = profile.detection.copy(enabled = on)))
+                                StreamController.setDetectionEnabled(on)
+                            }
+                        }
                     }
                     Banner(
                         status, showBanner, onDismiss = { showBanner = false; onDismissInterrupted() },
@@ -390,9 +405,12 @@ private fun formatDuration(ms: Long): String {
 // --- Top right: compact readouts ---------------------------------------------------------------
 
 @Composable
-private fun InfoChips(status: StreamStatus, profile: Profile, stacked: Boolean, modifier: Modifier) {
+private fun InfoChips(status: StreamStatus, profile: Profile, targets: Int?, stacked: Boolean, modifier: Modifier) {
     val content: @Composable () -> Unit = {
         if (status.running) {
+            if (targets != null && status.detection != null) {
+                Chip(if (targets == 1) "1 target" else "$targets targets", icon = Icons.Outlined.CenterFocusStrong)
+            }
             if (status.link == LinkState.Live) {
                 Chip(formatRate(status.sendKbps))
                 status.rttMs?.let { Chip("RTT %.0f ms".format(it)) }
@@ -592,6 +610,9 @@ private fun StatsPanel(status: StreamStatus, profile: Profile) {
                 profile.metadata.headingOffsetDeg.takeIf { it != 0.0 }?.let { " · %+.1f° correction".format(it) }.orEmpty(),
             if (status.gnss.compassLow) WarnAmber else Color.White,
         )
+        status.detection?.let { d ->
+            StatLine("Detection", "RF-DETR Nano · %.1f Hz · %d ms".format(d.rateHz, d.inferenceMs))
+        }
         StatLine("Metadata", "ST 0601.${profile.metadata.lsVersion} · ${"%.0f".format(profile.metadata.rateHz)} Hz · ${if (profile.metadata.carriage.name == "SYNC") "sync" else "async"}")
         status.recordingPath?.let { StatLine("Recording", it.substringAfterLast('/')) }
     }

@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.sparrow.core.klv.St0601Decoder
 import app.sparrow.core.klv.Tag
+import app.sparrow.core.klv.VmtiFrame
 import app.sparrow.stream.StreamController
 import java.time.Instant
 
@@ -70,6 +71,18 @@ fun InspectorScreen(onBack: () -> Unit) {
                             else -> item.display
                         }
                         Text(value ?: "", Modifier.weight(1.2f), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                (d[Tag.VMTI_LOCAL_SET] as? VmtiFrame)?.takeIf { it.targets.isNotEmpty() }?.let { v ->
+                    HorizontalDivider()
+                    Text("VMTI targets (ST 0903) · ${v.frameWidth}×${v.frameHeight}", fontWeight = FontWeight.SemiBold)
+                    v.targets.forEach { t ->
+                        Text(
+                            "#${t.id} ${t.className ?: "?"} ${t.confidence}% · box ${t.left},${t.top}–${t.right},${t.bottom}" +
+                                (t.location?.let { " · %.6f, %.6f".format(it.lat, it.lon) } ?: ""),
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     }
                 }
                 HorizontalDivider()

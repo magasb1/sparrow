@@ -10,6 +10,9 @@ import app.sparrow.core.config.Destination
 import app.sparrow.core.config.MetadataSettings
 import app.sparrow.core.config.Profile
 import app.sparrow.core.config.SrtMode
+import app.sparrow.core.cv.Box
+import app.sparrow.core.cv.TrackedObject
+import app.sparrow.cv.DetectionStats
 import app.sparrow.core.klv.LatLon
 import app.sparrow.core.klv.St0601Encoder
 import app.sparrow.core.klv.UasMetadata
@@ -140,6 +143,35 @@ class ScreenshotTest {
     fun mainDetailsPortrait() {
         setLive("720×1280 H264")
         shot("13-portrait-details") { Camera(stats = true) }
+    }
+
+    private fun setDetections() {
+        val repo = app.profiles
+        repo.save(repo.active.copy(detection = repo.active.detection.copy(enabled = true)))
+        StreamController.update { it.copy(detection = DetectionStats(inferenceMs = 182, rateHz = 4.0, detections = 4)) }
+        StreamController.publishTracks(
+            listOf(
+                TrackedObject(12, 1, 0.91f, Box(0.30f, 0.50f, 0.36f, 0.68f), 40),
+                TrackedObject(14, 1, 0.84f, Box(0.38f, 0.52f, 0.43f, 0.67f), 22),
+                TrackedObject(9, 3, 0.88f, Box(0.55f, 0.56f, 0.70f, 0.66f), 61),
+                TrackedObject(3, 9, 0.73f, Box(0.12f, 0.70f, 0.26f, 0.80f), 95),
+            ),
+        )
+    }
+
+    @Test
+    fun mainDetections() {
+        setLive()
+        setDetections()
+        shot("14-detections") { Camera() }
+    }
+
+    @Test
+    @Config(qualifiers = "w400dp-h880dp-port-night-xxhdpi")
+    fun mainDetectionsPortrait() {
+        setLive("720×1280 H264")
+        setDetections()
+        shot("15-detections-portrait") { Camera(stats = true) }
     }
 
     @Test

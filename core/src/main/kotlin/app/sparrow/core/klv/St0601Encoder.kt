@@ -39,6 +39,10 @@ class St0601Encoder(
         num(Tag.FRAME_CENTER_ELEVATION, m.frameCenterElevation)
         text(Tag.PLATFORM_CALL_SIGN, m.callSign)
         raw(Tag.UAS_LS_VERSION, version.toLong())
+        m.vmti?.let { v ->
+            header(Tag.VMTI_LOCAL_SET, v.size)
+            body.bytes(v)
+        }
         num(Tag.SENSOR_ELLIPSOID_HEIGHT, m.sensorEllipsoidHeight)
         m.corners?.takeIf { it.size == 4 }?.let { c ->
             num(Tag.CORNER_LAT_1, c[0].lat); num(Tag.CORNER_LON_1, c[0].lon)

@@ -70,6 +70,19 @@ data class MetadataSettings(
     val carriage: KlvCarriage = KlvCarriage.SYNC,
 )
 
+/** On-device object detection (RF-DETR Nano) and ST 0903 VMTI reporting. */
+@Serializable
+data class DetectionSettings(
+    val enabled: Boolean = false,
+    /** Inferences per second; the phone's CPU sets the real ceiling (about 3–8 Hz). */
+    val rateHz: Double = 4.0,
+    val minConfidence: Double = 0.5,
+    /** COCO category ids to detect. */
+    val classes: Set<Int> = app.sparrow.core.cv.CocoClasses.DEFAULT_WATCH,
+    /** Send tracks as VMTI in KLV Tag 74. */
+    val sendVmti: Boolean = true,
+)
+
 @Serializable
 data class AdvancedSettings(
     val adaptiveBitrate: Boolean = true,
@@ -88,6 +101,7 @@ data class Profile(
     val video: VideoSettings = VideoSettings(),
     val audio: AudioSettings = AudioSettings(),
     val metadata: MetadataSettings = MetadataSettings(),
+    val detection: DetectionSettings = DetectionSettings(),
     val advanced: AdvancedSettings = AdvancedSettings(),
     /** Set by the backend. A managed profile is replaced whenever the backend's config changes. */
     val managed: Boolean = false,
@@ -112,6 +126,10 @@ data class Profile(
         listOf(m.missionId, m.platformDesignation, m.imageSourceSensor, m.callSign).forEach {
             if (it.toByteArray().size > St0601.MAX_STRING_BYTES) add("Metadata text fields are limited to 127 bytes")
         }
+        val det = detection
+        if (det.rateHz !in 0.5..15.0) add("Detection rate must be 0.5–15 Hz")
+        if (det.minConfidence !in 0.05..0.99) add("Detection confidence must be 5–99 %")
+        if (det.enabled && det.classes.isEmpty()) add("Choose at least one object class to detect")
         val a = advanced
         if (a.adaptiveBitrate && a.minBitrateKbps > a.maxBitrateKbps) add("ABR minimum exceeds maximum")
     }

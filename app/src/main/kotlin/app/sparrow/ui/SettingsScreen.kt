@@ -41,12 +41,16 @@ import app.sparrow.core.config.FocusMode
 import app.sparrow.core.config.Profile
 import app.sparrow.core.config.RateControl
 import app.sparrow.core.config.SrtMode
+import app.sparrow.core.cv.CocoClasses
 import app.sparrow.core.klv.Tag
 import app.sparrow.core.srt.SrtUrl
 import app.sparrow.core.ts.KlvCarriage
 import app.sparrow.core.ts.VideoCodec
 import app.sparrow.data.ProfileRepository
 import app.sparrow.stream.CameraInfo
+
+/** Classes offered in Settings; the model knows all 80 COCO classes. */
+private val DETECTABLE = listOf(1, 2, 3, 4, 6, 7, 8, 9, 5, 16, 18, 19, 27, 33)
 
 private val RESOLUTIONS = listOf(640 to 360, 1280 to 720, 1920 to 1080, 3840 to 2160)
 
@@ -165,6 +169,38 @@ fun SettingsScreen(profiles: ProfileRepository, onBack: () -> Unit) {
                         )
                         Text("${tag.id} · ${tag.label}")
                     }
+                }
+            }
+
+            Section("Object detection") {
+                SwitchRow(
+                    "Detect objects", p.detection.enabled, { p = p.copy(detection = p.detection.copy(enabled = it)) },
+                    supporting = "RF-DETR Nano on the phone. Boxes show on the viewfinder; costs battery.",
+                )
+                if (p.detection.enabled) {
+                    ChoiceRow("Analysis rate", listOf(2.0, 4.0, 8.0), p.detection.rateHz, { p = p.copy(detection = p.detection.copy(rateHz = it)) }) {
+                        "%.0f Hz".format(it)
+                    }
+                    ChoiceRow("Minimum confidence", listOf(0.35, 0.5, 0.7), p.detection.minConfidence, { p = p.copy(detection = p.detection.copy(minConfidence = it)) }) {
+                        "%.0f %%".format(it * 100)
+                    }
+                    Text("Classes", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        DETECTABLE.forEach { id ->
+                            androidx.compose.material3.FilterChip(
+                                selected = id in p.detection.classes,
+                                onClick = {
+                                    val c = if (id in p.detection.classes) p.detection.classes - id else p.detection.classes + id
+                                    p = p.copy(detection = p.detection.copy(classes = c))
+                                },
+                                label = { Text(CocoClasses.displayName(id)) },
+                            )
+                        }
+                    }
+                    SwitchRow(
+                        "Send targets in KLV", p.detection.sendVmti, { p = p.copy(detection = p.detection.copy(sendVmti = it)) },
+                        supporting = "MISB ST 0903 VMTI in ST 0601 tag 74, with ground positions when GNSS allows.",
+                    )
                 }
             }
 

@@ -49,7 +49,8 @@ class SensorHub(private val context: Context) {
     @Volatile var usingGnssTime = false
         private set
 
-    private val poses = arrayOfNulls<Pair<Long, FloatArray>>(64)
+    /** ~2.5 s at 100 Hz: covers stabilisation and encoder latency before a frame is stamped. */
+    private val poses = arrayOfNulls<Pair<Long, FloatArray>>(256)
     private var poseIndex = 0
     private val rotation = FloatArray(9)
 
@@ -78,7 +79,7 @@ class SensorHub(private val context: Context) {
         if (rotationSensor == null) {
             AppLog.w("No rotation vector sensor: attitude tags will be omitted")
         } else {
-            sensorManager.registerListener(sensorListener, rotationSensor, 20_000, handler)
+            sensorManager.registerListener(sensorListener, rotationSensor, 10_000, handler)
         }
         runCatching {
             locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 500L, 0f, locationListener, thread.looper)
@@ -154,7 +155,8 @@ class SensorHub(private val context: Context) {
         val nearest = synchronized(poses) {
             poses.filterNotNull().minByOrNull { kotlin.math.abs(it.first - captureUs) }
         } ?: return null
-        if (kotlin.math.abs(nearest.first - captureUs) > 500_000) return null
+        // A far-off sample is a different pose; omitting attitude beats sending a wrong one.
+        if (kotlin.math.abs(nearest.first - captureUs) > 25_000) return null
         val pose = CameraPose.fromDevice(Mat3.of(nearest.second), facing, sensorOrientation)
         return CameraPose(rotateAzimuth(pose.forward, declinationDeg), rotateAzimuth(pose.up, declinationDeg))
     }

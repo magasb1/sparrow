@@ -215,11 +215,14 @@ class StreamPipeline(
         // FOV in sensor orientation, then swapped if the stream is turned on its side.
         val (sensorH, sensorV) = cameraInfo.fieldOfView(sensorAspect, camera.zoomRatio)
         val (hfov, vfov) = if (orientation.swapsAxes) sensorV to sensorH else sensorH to sensorV
+        // The frame timestamp is when the first row starts exposing; the picture as a whole shows
+        // the pose at mid-exposure of the middle row, often a frame period later.
+        val exposureUs = captureUs + camera.exposureMidOffsetUs
         val metadata = composer.compose(
             timestampUtcMicros = sensors.utcMicros(captureUs),
             captureUs = captureUs,
             fix = sensors.latestFix,
-            pose = sensors.poseAt(captureUs, cameraInfo.facing, orientation.remainingSensorRotationDeg),
+            pose = sensors.poseAt(exposureUs, cameraInfo.facing, orientation.remainingSensorRotationDeg),
             horizontalFovDeg = hfov,
             verticalFovDeg = vfov,
         )

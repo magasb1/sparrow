@@ -174,8 +174,11 @@ class TsMuxer(private val config: TsConfig, private val output: TsChunker) {
 
     /** Writes the 4-byte TS header; returns the next write index. */
     private fun header(pid: Int, pusi: Boolean, hasAf: Boolean, hasPayload: Boolean): Int {
-        val counter = cc[pid] ?: 0
-        if (hasPayload) cc[pid] = (counter + 1) and 0x0F
+        // continuity_counter advances per payload packet only; a PCR-only packet repeats the last
+        // value (ISO 13818-1 §2.4.3.3). Receivers treat anything else as loss.
+        val last = cc[pid] ?: 0x0F
+        val counter = if (hasPayload) (last + 1) and 0x0F else last
+        cc[pid] = counter
         packet[0] = TsConst.SYNC_BYTE.toByte()
         packet[1] = ((if (pusi) 0x40 else 0) or (pid ushr 8 and 0x1F)).toByte()
         packet[2] = pid.toByte()

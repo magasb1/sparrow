@@ -8,6 +8,8 @@ import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.CaptureResult
+import android.hardware.camera2.TotalCaptureResult
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
 import android.media.MediaCodec
@@ -129,6 +131,21 @@ class CameraSource(
     @Volatile var zoomRatio: Double = settings.zoomRatio.coerceIn(info.zoomRange)
         private set
 
+    /**
+     * Time from the frame timestamp (first row starts exposing) to the middle of the frame's
+     * exposure, µs: half the exposure plus half the rolling-shutter readout. Tracks AE changes.
+     */
+    @Volatile var exposureMidOffsetUs: Long = 0
+        private set
+
+    private val captureCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureCompleted(s: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+            val exposureNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: return
+            val skewNs = result.get(CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW) ?: 0L
+            exposureMidOffsetUs = (exposureNs + skewNs) / 2000
+        }
+    }
+
     /** True when output timestamps are already elapsedRealtime. */
     private val realtimeBase = Build.VERSION.SDK_INT >= 33 || info.realtimeTimestamps
 
@@ -195,7 +212,7 @@ class CameraSource(
     fun setZoom(ratio: Double) {
         handler.post {
             zoomRatio = ratio.coerceIn(info.zoomRange)
-            session?.let { runCatching { it.setRepeatingRequest(buildRequest(it.device), null, handler) } }
+            session?.let { runCatching { it.setRepeatingRequest(buildRequest(it.device), captureCallback, handler) } }
         }
     }
 
@@ -216,7 +233,7 @@ class CameraSource(
                     s.close(); return
                 }
                 session = s
-                runCatching { s.setRepeatingRequest(buildRequest(camera, targets), null, handler) }
+                runCatching { s.setRepeatingRequest(buildRequest(camera, targets), captureCallback, handler) }
                     .onFailure { AppLog.e("Could not start capture", it) }
             }
 

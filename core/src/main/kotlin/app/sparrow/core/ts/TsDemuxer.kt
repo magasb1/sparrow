@@ -55,9 +55,11 @@ class TsDemuxer {
             }
             i += 1 + afLen
         }
-        if (afc and 0x01 == 0) return
-        lastCc[pid]?.let { if ((it + 1) and 0x0F != cc) continuityErrors++ }
+        // A packet without payload repeats the previous counter (§2.4.3.3); a jump counts as loss.
+        val hasPayload = afc and 0x01 != 0
+        lastCc[pid]?.let { if ((if (hasPayload) (it + 1) and 0x0F else it) != cc) continuityErrors++ }
         lastCc[pid] = cc
+        if (!hasPayload) return
 
         if (pid in psiPids) {
             if (pusi) {

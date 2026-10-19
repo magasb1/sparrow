@@ -9,3 +9,4 @@ captures/
 *.apk
 *.aab
 *.keystore
+deploy/.env

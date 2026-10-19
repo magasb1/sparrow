@@ -71,6 +71,7 @@ kotlin {
 
 dependencies {
     implementation(project(":core"))
+    implementation(project(":protocol"))
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.core.ktx)

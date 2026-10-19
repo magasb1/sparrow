@@ -17,17 +17,21 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import android.content.Intent
 import app.sparrow.SparrowApp
+import app.sparrow.remote.BackendSession
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.sparrow.stream.StreamController
 import app.sparrow.stream.StreamingService
 
-enum class Screen { Main, Settings, Profiles, Inspector, Log, Onboarding }
+enum class Screen { Main, Settings, Profiles, Inspector, Log, Onboarding, Backend }
 
 class MainActivity : ComponentActivity() {
     private val app get() = SparrowApp.get(this)
     private var pendingStart = false
     private var cameraGranted by mutableStateOf(false)
+    /** An enrollment link opened from outside the app (sparrow://enroll?…), waiting for the user to confirm. */
+    private var enrollLink by mutableStateOf<String?>(null)
 
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         refreshPermissions()
@@ -45,6 +49,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Only on a fresh start: after rotation the link has already been handled.
+        if (savedInstanceState == null) enrollLink = enrollLinkOf(intent)
         setContent {
             SparrowTheme {
                 var screen by rememberSaveable {
@@ -57,7 +63,19 @@ class MainActivity : ComponentActivity() {
                     requestedOrientation = status.displayRotationDeg?.takeIf { status.running }?.let(::lockFor)
                         ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                 }
-                BackHandler(enabled = screen != Screen.Main && screen != Screen.Onboarding) { screen = Screen.Main }
+                // The link the Backend screen was opened with; cleared when it is left by any route.
+                var backendLink by rememberSaveable { mutableStateOf<String?>(null) }
+                BackHandler(enabled = screen != Screen.Main && screen != Screen.Onboarding) {
+                    backendLink = null
+                    screen = Screen.Main
+                }
+                LaunchedEffect(enrollLink) {
+                    enrollLink?.let {
+                        backendLink = it
+                        enrollLink = null
+                        screen = Screen.Backend
+                    }
+                }
                 when (screen) {
                     Screen.Onboarding -> OnboardingScreen(
                         onRequestPermissions = { requestPermissions(start = false) },
@@ -80,6 +98,10 @@ class MainActivity : ComponentActivity() {
                     Screen.Profiles -> ProfilesScreen(app.profiles, onBack = { screen = Screen.Main })
                     Screen.Inspector -> InspectorScreen(onBack = { screen = Screen.Main })
                     Screen.Log -> LogScreen(onBack = { screen = Screen.Main })
+                    Screen.Backend -> BackendScreen(initialLink = backendLink, onBack = {
+                        backendLink = null
+                        screen = Screen.Main
+                    })
                 }
             }
         }
@@ -91,6 +113,29 @@ class MainActivity : ComponentActivity() {
         180 -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
         270 -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
         else -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        enrollLinkOf(intent)?.let { enrollLink = it }
+    }
+
+    /** The enrollment link in [intent], unless the app was reopened from Recents with an old one. */
+    private fun enrollLinkOf(intent: Intent?): String? {
+        if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return null
+        return intent.data?.takeIf { it.scheme == "sparrow" && it.host == "enroll" }?.toString()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        BackendSession.acquire("ui")
+    }
+
+    override fun onStop() {
+        // A rotation restarts the activity at once; keep the link up through it.
+        if (!isChangingConfigurations) BackendSession.release("ui")
+        super.onStop()
     }
 
     override fun onResume() {

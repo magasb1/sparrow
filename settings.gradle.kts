@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "sparrow"
-include(":core", ":app")
+include(":core", ":protocol", ":app")

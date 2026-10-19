@@ -15,6 +15,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import app.sparrow.data.ProfileRepository
 import app.sparrow.log.AppLog
+import app.sparrow.remote.BackendSession
 import app.sparrow.ui.MainActivity
 
 class SparrowApp : Application() {
@@ -31,6 +32,7 @@ class SparrowApp : Application() {
         super.onCreate()
         AppLog.init(this)
         profiles = ProfileRepository(this)
+        BackendSession.init(this)
         createChannels()
         // A fresh process with the "live" flag still set means we were killed while streaming.
         if (prefs.getBoolean(KEY_SESSION_ACTIVE, false)) {

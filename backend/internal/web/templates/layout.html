@@ -1,0 +1,19 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sparrow</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/htmx.min.js"></script>
+</head>
+<body>
+{{end}}
+{{define "nav"}}
+<header>
+  <strong>Sparrow</strong>
+  <nav><a href="/">Devices</a> <a href="/enroll">Add phone</a></nav>
+  <form method="post" action="/logout"><button class="link">Log out</button></form>
+</header>
+{{end}}
+{{define "foot"}}</body></html>{{end}}

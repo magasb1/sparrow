@@ -1,0 +1,43 @@
+# Sparrow backend, milestone 1: sparrowd and PostgreSQL.
+# Copy .env.example to .env, set the passwords, then: docker compose up -d
+name: sparrow
+
+services:
+  postgres:
+    image: postgres:17.6
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sparrow
+      POSTGRES_USER: sparrow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sparrow -d sparrow"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  sparrowd:
+    build: ../backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPARROW_DATABASE_URL: postgres://sparrow:${POSTGRES_PASSWORD}@postgres:5432/sparrow
+      SPARROW_ADMIN_USER: ${SPARROW_ADMIN_USER:-admin}
+      SPARROW_ADMIN_PASSWORD: ${SPARROW_ADMIN_PASSWORD:?set SPARROW_ADMIN_PASSWORD in .env}
+      SPARROW_PUBLIC_URL: ${SPARROW_PUBLIC_URL:-}
+      SPARROW_TLS_HOSTS: ${SPARROW_TLS_HOSTS:-}
+      SPARROW_TLS_CERT: ${SPARROW_TLS_CERT:-}
+      SPARROW_TLS_KEY: ${SPARROW_TLS_KEY:-}
+    ports:
+      - "8443:8443"
+    volumes:
+      # Holds the self-signed certificate. Phones pin its key: keep this volume.
+      - sparrow:/var/lib/sparrow
+
+volumes:
+  postgres:
+  sparrow:

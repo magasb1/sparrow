@@ -35,6 +35,10 @@ to zoom.
 | --- | --- |
 | <img src="docs/screenshots/09-main-permission.png" width="420"> | <img src="docs/screenshots/01-onboarding.png" width="420"> |
 
+| Backend: register | Backend: connected |
+| --- | --- |
+| <img src="docs/screenshots/14-backend-register.png" width="420"> | <img src="docs/screenshots/15-backend-connected.png" width="420"> |
+
 | Profiles | Log |
 | --- | --- |
 | <img src="docs/screenshots/06-profiles.png" width="420"> | <img src="docs/screenshots/08-log.png" width="420"> |
@@ -49,6 +53,9 @@ to zoom.
 | --- | --- |
 | `core` | Pure Kotlin/JVM, unit-tested: ST 0601 encoder/decoder, ST 1402 TS muxer, Annex B handling, ADTS, frame-center/corner geometry, profiles, `srt://` URLs, reconnect backoff, adaptive bitrate. |
 | `app` | Android app: foreground service, Camera2 → MediaCodec, GNSS/orientation sensors, SRT (libsrt through [srtdroid](https://github.com/ThibaultBee/srtdroid)), Jetpack Compose UI. |
+| `protocol` | Pure Kotlin/JVM, unit-tested: classes generated from `proto/`, profile mapping, enrollment links and the client for the optional backend. |
+| `proto` | Protobuf schema shared by the app and the backend. |
+| `backend` | Optional on-prem backend in Go (`sparrowd`): phone registration, status and telemetry, web page. See [backend/README.md](backend/README.md) and [docs/backend-plan.md](docs/backend-plan.md). |
 
 Media path, all inside `StreamingService`:
 
@@ -143,7 +150,7 @@ verification against the acceptance criteria in the SRS.
 | SRT-4 `srt://` URL / QR | Paste from clipboard and QR decoded from an image; live QR scanning not yet |
 | BG-1..6 foreground service, locks, notification, handover, onboarding, kill detection | Implemented |
 | UI-1..6 camera-style main screen, settings, profiles + JSON, inspector, log export, local recording | Implemented |
-| NFR-5 Keystore passphrases, no telemetry | Implemented |
+| NFR-5 Keystore passphrases, no telemetry | Implemented; nothing is sent unless the user registers the phone with a backend |
 | NFR-7 golden byte vectors | KLV, PAT and ADTS vectors in `core` tests |
 
 Known gaps and notes:

@@ -1,0 +1,11 @@
+{{template "head"}}
+<main class="narrow">
+  <h1>Sparrow</h1>
+  <form method="post" action="/login" class="card">
+    <label>User <input name="user" autocomplete="username" required autofocus></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    {{with .Error}}<p class="error">{{.}}</p>{{end}}
+    <button>Log in</button>
+  </form>
+</main>
+{{template "foot"}}

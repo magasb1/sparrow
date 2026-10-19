@@ -1,7 +1,6 @@
 package app.sparrow.ui
 
 import android.content.ClipboardManager
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -48,10 +47,6 @@ import app.sparrow.core.ts.KlvCarriage
 import app.sparrow.core.ts.VideoCodec
 import app.sparrow.data.ProfileRepository
 import app.sparrow.stream.CameraInfo
-import com.google.zxing.BinaryBitmap
-import com.google.zxing.MultiFormatReader
-import com.google.zxing.RGBLuminanceSource
-import com.google.zxing.common.HybridBinarizer
 
 private val RESOLUTIONS = listOf(640 to 360, 1280 to 720, 1920 to 1080, 3840 to 2160)
 
@@ -69,7 +64,7 @@ fun SettingsScreen(profiles: ProfileRepository, onBack: () -> Unit) {
     }
 
     val qrPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
-        uri?.let { decodeQr(context, it) }?.let { applyUrl(it) }
+        uri?.let { decodeQrImage(context, it) }?.takeIf { it.startsWith("srt://", ignoreCase = true) }?.let { applyUrl(it) }
             ?: uri?.let { Toast.makeText(context, "No srt:// QR code found in the image", Toast.LENGTH_LONG).show() }
     }
 
@@ -184,6 +179,13 @@ fun SettingsScreen(profiles: ProfileRepository, onBack: () -> Unit) {
                     supporting = "Saves the sent transport stream to the app's Movies folder.")
             }
 
+            if (p.managed) {
+                Text(
+                    "This profile is managed by the backend and changes come from the server. " +
+                        "Duplicate it under Profiles to make a local copy you can edit.",
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             errors.forEach { Text(it, color = MaterialTheme.colorScheme.error) }
             Button(
                 onClick = {
@@ -191,21 +193,9 @@ fun SettingsScreen(profiles: ProfileRepository, onBack: () -> Unit) {
                     Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show()
                     onBack()
                 },
-                enabled = errors.isEmpty(),
+                enabled = errors.isEmpty() && !p.managed,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Save") }
         }
     }
 }
-
-private fun decodeQr(context: android.content.Context, uri: Uri): String? = runCatching {
-    val bitmap = context.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it) } ?: return null
-    val scale = minOf(1.0, 1600.0 / maxOf(bitmap.width, bitmap.height))
-    val scaled = if (scale < 1.0) {
-        android.graphics.Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true)
-    } else bitmap
-    val pixels = IntArray(scaled.width * scaled.height)
-    scaled.getPixels(pixels, 0, scaled.width, 0, 0, scaled.width, scaled.height)
-    val source = RGBLuminanceSource(scaled.width, scaled.height, pixels)
-    MultiFormatReader().decode(BinaryBitmap(HybridBinarizer(source))).text.takeIf { it.startsWith("srt://", ignoreCase = true) }
-}.getOrNull()

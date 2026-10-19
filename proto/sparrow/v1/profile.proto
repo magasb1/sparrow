@@ -1,0 +1,104 @@
+syntax = "proto3";
+
+package sparrow.v1;
+
+option go_package = "github.com/magasb1/sparrow/backend/gen/sparrow/v1;sparrowv1";
+option java_multiple_files = true;
+option java_package = "app.sparrow.protocol.v1";
+
+// Mirrors app.sparrow.core.config.Profile field for field. Enum value 0 means "not set" and maps
+// to the Kotlin default.
+message Profile {
+  string id = 1;
+  string name = 2;
+  Destination destination = 3;
+  VideoSettings video = 4;
+  AudioSettings audio = 5;
+  MetadataSettings metadata = 6;
+  AdvancedSettings advanced = 7;
+}
+
+enum SrtMode {
+  SRT_MODE_UNSPECIFIED = 0;
+  SRT_MODE_CALLER = 1;
+  SRT_MODE_LISTENER = 2;
+}
+
+message Destination {
+  SrtMode mode = 1;
+  string host = 2;
+  uint32 port = 3;
+  string stream_id = 4;
+  uint32 latency_ms = 5;
+  // Empty = unencrypted.
+  string passphrase = 6;
+  // 0 (library default), 16, 24 or 32.
+  uint32 key_length = 7;
+}
+
+enum VideoCodec {
+  VIDEO_CODEC_UNSPECIFIED = 0;
+  VIDEO_CODEC_H264 = 1;
+  VIDEO_CODEC_H265 = 2;
+}
+
+enum RateControl {
+  RATE_CONTROL_UNSPECIFIED = 0;
+  RATE_CONTROL_VBR = 1;
+  RATE_CONTROL_CBR = 2;
+}
+
+enum FocusMode {
+  FOCUS_MODE_UNSPECIFIED = 0;
+  FOCUS_MODE_CONTINUOUS = 1;
+  FOCUS_MODE_INFINITY = 2;
+}
+
+message VideoSettings {
+  // Camera2 id; unset = first back camera.
+  optional string camera_id = 1;
+  VideoCodec codec = 2;
+  uint32 width = 3;
+  uint32 height = 4;
+  uint32 fps = 5;
+  uint32 bitrate_kbps = 6;
+  double gop_seconds = 7;
+  RateControl rate_control = 8;
+  double zoom_ratio = 9;
+  FocusMode focus = 10;
+  bool stabilization = 11;
+}
+
+message AudioSettings {
+  bool enabled = 1;
+  uint32 bitrate_kbps = 2;
+  uint32 sample_rate = 3;
+  uint32 channels = 4;
+}
+
+enum KlvCarriage {
+  KLV_CARRIAGE_UNSPECIFIED = 0;
+  KLV_CARRIAGE_SYNC = 1;
+  KLV_CARRIAGE_ASYNC = 2;
+}
+
+message MetadataSettings {
+  double rate_hz = 1;
+  // ST 0601 tag numbers of the optional tags to send.
+  repeated uint32 enabled_tags = 2;
+  string mission_id = 3;
+  string platform_designation = 4;
+  string image_source_sensor = 5;
+  string call_sign = 6;
+  double ground_elevation_m = 7;
+  uint32 ls_version = 8;
+  KlvCarriage carriage = 9;
+}
+
+message AdvancedSettings {
+  bool adaptive_bitrate = 1;
+  uint32 min_bitrate_kbps = 2;
+  uint32 max_bitrate_kbps = 3;
+  uint32 pts_delay_ms = 4;
+  bool record_locally = 5;
+}

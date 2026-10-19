@@ -14,6 +14,7 @@ import app.sparrow.core.klv.LatLon
 import app.sparrow.core.klv.St0601Encoder
 import app.sparrow.core.klv.UasMetadata
 import app.sparrow.log.AppLog
+import app.sparrow.remote.BackendSession
 import app.sparrow.stream.GnssStatus
 import app.sparrow.stream.LinkState
 import app.sparrow.stream.StreamController
@@ -190,6 +191,28 @@ class ScreenshotTest {
         AppLog.i("Network changed; reconnecting SRT")
         AppLog.i("ABR: video bitrate → 900 kbit/s")
         shot("08-log") { LogScreen(onBack = {}) }
+    }
+
+    @Test
+    @Config(qualifiers = "w880dp-h640dp-land-night-xxhdpi")
+    fun backendRegister() = shot("14-backend-register") {
+        BackendContent(
+            state = BackendSession.State(),
+            initialLink = "sparrow://enroll?fp=WRHsuhH8v7gFjgyJO9sJsu-YVvzCoLJVbDBrDchD7VY&t=l3En34ZRNRhl_I-MCVNcp_K_9hT6j6auosBaNWqxjGY&u=https%3A%2F%2F192.168.1.10%3A8443",
+            onBack = {}, onRegister = {}, onUnregister = {},
+        )
+    }
+
+    @Test
+    fun backendConnected() = shot("15-backend-connected") {
+        BackendContent(
+            state = BackendSession.State(
+                registered = true, serverUrl = "https://192.168.1.10:8443", alias = "cam-07",
+                link = BackendSession.Link.CONNECTED, lastReportAtMs = 1_000_000L - 12_000, appliedRevision = 3,
+            ),
+            initialLink = null, onBack = {}, onRegister = {}, onUnregister = {},
+            nowMs = { 1_000_000L },
+        )
     }
 }
 

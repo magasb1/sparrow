@@ -64,6 +64,33 @@ class ProfileRepository(context: Context) {
         prefs.edit().putString(KEY_ACTIVE, id).apply()
     }
 
+    /**
+     * Makes [profile] the backend-managed profile, and selects it when [select] is set. Any other
+     * managed profile is removed; local profiles are left alone.
+     */
+    @Synchronized
+    fun applyManaged(profile: Profile, select: Boolean) {
+        val managed = profile.copy(managed = true)
+        secrets.put(managed.id, managed.destination.passphrase)
+        AppLog.addSecret(managed.destination.passphrase)
+        val list = _profiles.value
+        list.filter { it.managed && it.id != managed.id }.forEach { secrets.remove(it.id) }
+        val kept = list.filterNot { it.managed && it.id != managed.id }
+        persist(if (kept.any { it.id == managed.id }) kept.map { if (it.id == managed.id) managed else it } else kept + managed)
+        if (select) select(managed.id)
+    }
+
+    /** Removes managed profiles, e.g. after unregistering from the backend. */
+    @Synchronized
+    fun removeManaged() {
+        val gone = _profiles.value.filter { it.managed }
+        if (gone.isEmpty()) return
+        gone.forEach { secrets.remove(it.id) }
+        val remaining = _profiles.value.filterNot { it.managed }.ifEmpty { listOf(Profile()) }
+        persist(remaining)
+        if (gone.any { it.id == _activeId.value }) select(remaining.first().id)
+    }
+
     fun exportJson(): String = ProfileCodec.export(_profiles.value)
 
     /** Imports profiles from JSON; returns how many were added. */

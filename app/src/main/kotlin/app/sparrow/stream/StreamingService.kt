@@ -21,7 +21,9 @@ import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import app.sparrow.R
 import app.sparrow.SparrowApp
+import app.sparrow.core.config.Profile
 import app.sparrow.log.AppLog
+import app.sparrow.remote.BackendSession
 import app.sparrow.ui.MainActivity
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -44,6 +46,11 @@ class StreamingService : LifecycleService() {
     private var restarts = ArrayDeque<Long>()
     private var stopping = false
     private var streamRotationDeg = 0
+    /**
+     * The profile the session started with. Automatic restarts reuse it, so a profile selected
+     * or pushed by the backend mid-stream never redirects a running stream.
+     */
+    private var sessionProfile: Profile? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
@@ -75,6 +82,7 @@ class StreamingService : LifecycleService() {
         streamRotationDeg = displayRotationDeg()
         val app = SparrowApp.get(this)
         val profile = app.profiles.active
+        sessionProfile = profile
         val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
             (if (profile.audio.enabled) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
         StreamController.update { it.copy(running = true, link = LinkState.Starting, profileName = profile.name) }
@@ -87,6 +95,8 @@ class StreamingService : LifecycleService() {
             return
         }
         app.markSessionActive(true)
+        // Keep reporting to the backend while streaming, also with the screen off.
+        BackendSession.acquire("service")
         acquireLocks()
         registerNetworkCallback()
         launchPipeline()
@@ -105,7 +115,7 @@ class StreamingService : LifecycleService() {
     }
 
     private fun launchPipeline() {
-        val profile = SparrowApp.get(this).profiles.active
+        val profile = sessionProfile ?: SparrowApp.get(this).profiles.active
         var self: StreamPipeline? = null
         try {
             // Failures are only honoured from the current pipeline, so one fault reported by
@@ -159,8 +169,10 @@ class StreamingService : LifecycleService() {
         main.removeCallbacksAndMessages(null)
         pipeline?.stop()
         pipeline = null
+        sessionProfile = null
         unregisterNetworkCallback()
         releaseLocks()
+        BackendSession.release("service")
         SparrowApp.get(this).markSessionActive(false)
         val failed = StreamController.status.value.link as? LinkState.Failed
         StreamController.reset()

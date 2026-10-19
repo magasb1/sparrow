@@ -487,6 +487,7 @@ private fun ControlBar(
                 DropdownMenuItem(text = { Text("Profiles") }, onClick = { open = false; onNavigate(Screen.Profiles) })
                 DropdownMenuItem(text = { Text("KLV inspector") }, onClick = { open = false; onNavigate(Screen.Inspector) })
                 DropdownMenuItem(text = { Text("Log") }, onClick = { open = false; onNavigate(Screen.Log) })
+                DropdownMenuItem(text = { Text("Backend") }, onClick = { open = false; onNavigate(Screen.Backend) })
                 DropdownMenuItem(text = { Text("Setup guide") }, onClick = { open = false; onNavigate(Screen.Onboarding) })
             }
         }

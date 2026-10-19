@@ -1,0 +1,158 @@
+syntax = "proto3";
+
+package sparrow.v1;
+
+import "google/protobuf/timestamp.proto";
+import "sparrow/v1/profile.proto";
+
+option go_package = "github.com/magasb1/sparrow/backend/gen/sparrow/v1;sparrowv1";
+option java_multiple_files = true;
+option java_package = "app.sparrow.protocol.v1";
+
+// Phone ↔ server. All calls except Register carry "Authorization: Bearer <device token>".
+service DeviceService {
+  // Exchanges a single-use enrollment token for a device identity.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  // Status and telemetry: every 5 s while live, every 30 s otherwise.
+  rpc Report(ReportRequest) returns (ReportResponse);
+  // Commands and config changes for this phone. Stays open; the server sends a heartbeat
+  // every 15 s so the phone notices a dead connection.
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
+  rpc CommandDone(CommandDoneRequest) returns (CommandDoneResponse);
+  rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
+  // The phone forgets the server; the server revokes the token.
+  rpc Unregister(UnregisterRequest) returns (UnregisterResponse);
+}
+
+message DeviceInfo {
+  string manufacturer = 1;
+  string model = 2;
+  uint32 android_sdk = 3;
+  string app_version = 4;
+  double zoom_min = 5;
+  double zoom_max = 6;
+}
+
+message RegisterRequest {
+  string enrollment_token = 1;
+  DeviceInfo device = 2;
+}
+
+message RegisterResponse {
+  string device_id = 1;
+  string device_token = 2;
+  // Stream name on the server, for example "cam-07".
+  string alias = 3;
+  DeviceConfig config = 4;
+}
+
+message DeviceConfig {
+  // 0 = the server manages no profile yet.
+  uint64 revision = 1;
+  // The one managed profile. Unset when revision is 0.
+  Profile profile = 2;
+}
+
+enum StreamState {
+  STREAM_STATE_UNSPECIFIED = 0;
+  STREAM_STATE_IDLE = 1;
+  STREAM_STATE_STANDBY = 2;
+  STREAM_STATE_STARTING = 3;
+  STREAM_STATE_CONNECTING = 4;
+  STREAM_STATE_LISTENING = 5;
+  STREAM_STATE_LIVE = 6;
+  STREAM_STATE_RECONNECTING = 7;
+  STREAM_STATE_FAILED = 8;
+}
+
+message Position {
+  double lat = 1;
+  double lon = 2;
+  optional double alt_msl = 3;
+  optional float accuracy_m = 4;
+  // Camera azimuth from true north and elevation above the horizon, degrees.
+  optional double heading_deg = 5;
+  optional double elevation_deg = 6;
+}
+
+message ReportRequest {
+  google.protobuf.Timestamp time = 1;
+  StreamState state = 2;
+  string reason = 3;
+  // Config revision the phone has applied.
+  uint64 config_revision = 4;
+  string profile_name = 5;
+
+  // Link, while live.
+  double send_kbps = 10;
+  uint32 target_kbps = 11;
+  optional double rtt_ms = 12;
+  optional double loss_percent = 13;
+
+  // Unset without a recent GNSS fix.
+  Position position = 20;
+
+  double zoom = 30;
+  string resolution = 31;
+  // 0–100; unset when unknown.
+  optional uint32 battery_percent = 32;
+  bool charging = 33;
+  // PowerManager.THERMAL_STATUS_*.
+  uint32 thermal_status = 34;
+}
+
+message ReportResponse {
+  // The phone calls GetConfig when this is newer than what it has applied.
+  uint64 latest_config_revision = 1;
+}
+
+message SubscribeRequest {}
+
+message SubscribeResponse {
+  oneof event {
+    Command command = 1;
+    // New config revision; the phone calls GetConfig.
+    uint64 config_changed = 2;
+    Heartbeat heartbeat = 3;
+  }
+}
+
+message Heartbeat {}
+
+message Command {
+  string id = 1;
+  oneof kind {
+    StartCommand start = 10;
+    StopCommand stop = 11;
+    RestartCommand restart = 12;
+    ZoomCommand zoom = 13;
+  }
+}
+
+message StartCommand {}
+
+message StopCommand {}
+
+message RestartCommand {}
+
+message ZoomCommand {
+  double ratio = 1;
+}
+
+message CommandDoneRequest {
+  string id = 1;
+  bool ok = 2;
+  string message = 3;
+}
+
+message CommandDoneResponse {}
+
+message GetConfigRequest {}
+
+message GetConfigResponse {
+  DeviceConfig config = 1;
+}
+
+message UnregisterRequest {}
+
+message UnregisterResponse {}

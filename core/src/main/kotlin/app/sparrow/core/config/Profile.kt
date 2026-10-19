@@ -87,6 +87,8 @@ data class Profile(
     val audio: AudioSettings = AudioSettings(),
     val metadata: MetadataSettings = MetadataSettings(),
     val advanced: AdvancedSettings = AdvancedSettings(),
+    /** Set by the backend. A managed profile is replaced whenever the backend's config changes. */
+    val managed: Boolean = false,
 ) {
     /** Problems that block streaming, as human-readable messages. Empty = valid. */
     fun validate(): List<String> = buildList {

@@ -6,8 +6,9 @@ passes each phone's stream on to other systems, with KLV byte-exact on SRT.
 
 The app works exactly as today when no backend is registered.
 
-Status: **proposal, not implemented.** This version deliberately leaves out PKI, ONVIF and
-everything else in §9. The design keeps room for them.
+Status: **milestones 0 and 1 implemented** (see [backend/README.md](../backend/README.md) for
+results and how to run it). Milestones 2–4 are not started. This version deliberately leaves out
+PKI, ONVIF and everything else in §9. The design keeps room for them.
 
 ---
 
@@ -66,8 +67,8 @@ MediaMTX gets a copy over loopback only for RTSP and the browser viewer.
 * **Auth:** `Authorization: Bearer <device token>`. The token is 32 random bytes, stored hashed on
   the server and in the existing `SecretStore` on the phone.
 * **TLS:** sparrowd uses a certificate from files if given; otherwise it creates a self-signed one
-  on first start. The enrollment link carries the certificate's SHA-256 fingerprint and the phone
-  pins it. `http://` is accepted for lab use, with a warning in the app.
+  on first start. The enrollment link carries the SHA-256 of the certificate's public key (SPKI)
+  and the phone pins it, so renewing the certificate with the same key keeps phones working. `http://` is accepted for lab use, with a warning in the app.
 
 ### 3.2 Service
 
@@ -158,8 +159,8 @@ backend/
   internal/
     api/        DeviceService handlers, bearer-token middleware, command routing
     store/      PostgreSQL with pgx v5 and sqlc; migrations with goose
-    ingest/     gosrt listeners, per-alias hub, SRT read, SRT push
-    relay/      loopback feed to MediaMTX, ffmpeg RTMP workers
+    relay/      gosrt listeners, per-alias hub, SRT read (milestone 0); SRT push later
+    outputs/    loopback feed to MediaMTX, ffmpeg RTMP workers (milestone 3–4)
     web/        html/template pages, htmx (embedded), login, MediaMTX WebRTC proxy
   gen/          buf-generated Go
 deploy/
@@ -173,8 +174,8 @@ deploy/
 ```
 SPARROW_DATABASE_URL     postgres://...
 SPARROW_ADMIN_USER       admin
-SPARROW_ADMIN_PASSWORD   bcrypt hash or plain on first run
-SPARROW_PUBLIC_HOST      address phones and NVRs use to reach the server
+SPARROW_ADMIN_PASSWORD   at least 8 characters
+SPARROW_PUBLIC_URL       base URL phones use, e.g. https://192.168.1.10:8443
 SPARROW_TLS_CERT/KEY     optional; self-signed if empty
 SPARROW_SRT_PUBLISH_PASSPHRASE   phones → server
 SPARROW_SRT_READ_PASSPHRASE      readers → server

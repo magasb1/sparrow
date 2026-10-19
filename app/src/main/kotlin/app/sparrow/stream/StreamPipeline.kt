@@ -232,7 +232,14 @@ class StreamPipeline(
     }
 
     private fun publishStatus() {
-        StreamController.update { it.copy(gnss = sensors.gnssStatus(SensorHub.nowUs())) }
+        val now = SensorHub.nowUs()
+        val gnss = sensors.gnssStatus(now)
+        val fix = sensors.latestFix?.takeIf { gnss.hasFix }
+        val pose = sensors.poseAt(now, cameraInfo.facing, orientation.remainingSensorRotationDeg)
+        val position = fix?.let {
+            PositionStatus(it.latitude, it.longitude, it.altitudeMsl, gnss.accuracyM, pose?.azimuthDeg, pose?.elevationDeg)
+        }
+        StreamController.update { it.copy(gnss = gnss, position = position) }
     }
 
     private fun openRecording(): OutputStream? = runCatching {

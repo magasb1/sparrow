@@ -22,7 +22,8 @@ object ProfileCodec {
         val bundle = json.decodeFromString(ProfileBundle.serializer(), text)
         return bundle.profiles.map { p ->
             val clean = p.withoutSecrets()
-            if (freshIds) clean.copy(id = java.util.UUID.randomUUID().toString()) else clean
+            // Only the backend makes managed profiles; an imported file never does.
+            if (freshIds) clean.copy(id = java.util.UUID.randomUUID().toString(), managed = false) else clean
         }
     }
 

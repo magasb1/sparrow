@@ -85,12 +85,14 @@ fun ProfilesScreen(profiles: ProfileRepository, onBack: () -> Unit) {
                         Column(Modifier.weight(1f)) {
                             Text(p.name, fontWeight = FontWeight.SemiBold)
                             Text(java.net.URLDecoder.decode(SrtUrl.format(p.destination), "UTF-8"), style = MaterialTheme.typography.bodySmall)
+                            if (p.managed) Text("Managed by the backend", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                         }
-                        IconButton(onClick = { renaming = p }) { Icon(Icons.Default.Edit, "Rename") }
+                        // The backend replaces a managed profile on every change, so it is edited there.
+                        if (!p.managed) IconButton(onClick = { renaming = p }) { Icon(Icons.Default.Edit, "Rename") }
                         IconButton(onClick = {
-                            profiles.save(p.copy(id = UUID.randomUUID().toString(), name = p.name + " copy"))
+                            profiles.save(p.copy(id = UUID.randomUUID().toString(), name = p.name + " copy", managed = false))
                         }) { Icon(Icons.Default.ContentCopy, "Duplicate") }
-                        IconButton(onClick = { profiles.delete(p.id) }, enabled = !(running && p.id == activeId)) {
+                        if (!p.managed) IconButton(onClick = { profiles.delete(p.id) }, enabled = !(running && p.id == activeId)) {
                             Icon(Icons.Default.Delete, "Delete")
                         }
                     }

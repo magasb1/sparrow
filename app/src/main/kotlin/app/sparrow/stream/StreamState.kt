@@ -23,6 +23,16 @@ data class GnssStatus(
     val usingGnssTime: Boolean = false,
 )
 
+/** Latest GNSS position and camera direction, for the backend's map. */
+data class PositionStatus(
+    val lat: Double,
+    val lon: Double,
+    val altMsl: Double?,
+    val accuracyM: Float?,
+    val headingDeg: Double?,
+    val elevationDeg: Double?,
+)
+
 data class StreamStatus(
     val link: LinkState = LinkState.Idle,
     /** True from Start until the service has fully stopped. */
@@ -33,6 +43,8 @@ data class StreamStatus(
     val rttMs: Double? = null,
     val lossPercent: Double? = null,
     val gnss: GnssStatus = GnssStatus(),
+    /** Null without a fresh GNSS fix. */
+    val position: PositionStatus? = null,
     val recordingPath: String? = null,
     val resolution: String = "",
     val zoomRange: ClosedFloatingPointRange<Double> = 1.0..1.0,

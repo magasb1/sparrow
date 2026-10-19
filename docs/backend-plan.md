@@ -1,593 +1,634 @@
-# Sparrow backend: telemetry, remote configuration, hosted SRT gateway
+# Sparrow backend: plan (v2, Go + protobuf, on-prem)
 
-Design and implementation plan for an optional central backend. The app keeps working exactly as
-today with no backend configured; everything in this document is additive and opt-in.
+An optional backend for Sparrow. Phones register with it, report config and telemetry, and take
+commands (start, stop, set config, zoom) from a web service. The backend also gives a basic live
+viewer and redistributes video to NVR/VMS and other consumers. It targets on-prem installs first.
 
-Status: **proposal, not implemented.** Decisions marked *(decide)* need an answer before the
-phase that depends on them starts.
+With no backend configured, the app behaves exactly as it does today. Everything here is opt-in.
 
----
-
-## 1. Goals and non-goals
-
-Goals
-
-1. **Telemetry.** A fleet operator sees every enrolled phone: online/live state, link quality
-   (bitrate, RTT, loss), position and attitude, battery/thermal, app version, recent log lines.
-2. **Remote configuration.** The operator pushes profiles (destination, video, metadata, ABR) to a
-   device or a group of devices; the phone applies them without the user retyping anything.
-3. **Hosted SRT gateway (optional).** The backend ships with a MediaMTX instance. Enrolled devices
-   can be pointed at it with one click; the operator previews the stream in the console and
-   downstream 4609 consumers pull it back out over SRT with KLV intact.
-4. **Commands.** While a device is live, the operator can zoom, change bitrate, force a keyframe,
-   switch profile, stop, or request logs. Commands work regardless of whether the stream goes to
-   the hosted gateway or a third-party receiver; the gateway just gives the operator a picture to
-   act on.
-5. **Optional.** Nothing leaves the phone unless a backend is enrolled *and* telemetry is enabled
-   (NFR-5 "no telemetry" stays true by default). Unenrolling returns the app to its current state.
-
-Non-goals (for now)
-
-* Multi-tenant SaaS. The first version is single-tenant and self-hosted (one operator
-  organisation per deployment). The schema reserves room for tenancy but no code path uses it.
-* Replacing the app's local profiles. Local profiles stay; managed profiles are added beside them.
-* Video processing on the server (transcoding, analytics). MediaMTX relays only.
-* Remote *start* from a cold, backgrounded app. Android forbids camera access from a foreground
-  service started in the background (API 30+), so remote start only works while Sparrow is on
-  screen. See §6.4 for the notification-based fallback.
+Status: **proposal, not implemented.** Items marked *(decide)* need an answer before the phase
+that depends on them. v1 of this plan proposed a Kotlin/Ktor server with JSON; v2 replaces it with
+Go and protobuf.
 
 ---
 
-## 2. Architecture overview
+## 1. Scope
 
-```
- Phone (Sparrow app)                         Backend (one Docker Compose stack)
- ┌──────────────────────────────┐            ┌─────────────────────────────────────────┐
- │ StreamingService / Pipeline  │  SRT/TS    │ MediaMTX  ─ SRT in (8890) ─ WebRTC/HLS   │
- │   camera → enc → mux → SRT ──┼───────────▶│           ─ SRT out for 4609 consumers  │
- │                              │            │     │ auth hook / ready hooks             │
- │ BackendSession               │            │     ▼                                   │
- │   ControlChannel (WebSocket)─┼─ wss ─────▶│ sparrow-server (Ktor, Kotlin)           │
- │   TelemetryCollector + spool─┼─ https ───▶│   REST + WebSocket, PostgreSQL           │
- │   RemoteConfigSync           │◀─ config ──│   operator API + static web console     │
- │   CommandDispatcher          │◀─ cmd ─────│                                         │
- │   BackendSyncWorker (idle)   │            │ Postgres   Caddy (TLS)                  │
- └──────────────────────────────┘            └─────────────────────────────────────────┘
-                                                        ▲ https
-                                               Operator browser (console)
-```
+In scope for the first release
 
-Three independent channels, so each can fail or be absent without breaking the others:
+1. **Registration.** A phone enrolls with a QR code or with a server URL plus admin approval.
+2. **Config.** The web service holds the desired config per device; the phone applies it and
+   reports back whether it was applied or rejected.
+3. **Telemetry.** Link stats, health, session events, and (opt-in) position and attitude.
+4. **Commands.** Start, stop, restart, select profile, zoom, bitrate, keyframe, upload logs.
+5. **Viewer.** Live video in the browser, with a status panel and a map.
+6. **Distribution.** NVR/VMS and other consumers pull each phone's stream from a stable URL
+   (RTSP, SRT, HLS). Push outputs follow in a later phase.
 
-| Channel | Direction | Transport | When |
-| --- | --- | --- | --- |
-| Media | phone → gateway | SRT (existing `SrtSender`) | Only when the active profile points at the gateway |
-| Control | both | one WebSocket, JSON messages | While streaming, and while the app is on screen |
-| Sync | phone → backend | HTTPS requests from WorkManager | Every 15 min when idle; immediately after a stream ends |
+Later (the design leaves room, nothing is built now)
 
-Why one WebSocket rather than MQTT, gRPC or FCM: the app already runs a foreground service while
-live, so a plain socket is reliable exactly when commands matter; kotlinx-serialization is already
-a dependency; the backend stays a single process (no broker); no Google Play Services dependency.
-MQTT would buy QoS and fan-out we do not need at this fleet size. Revisit if the fleet reaches
-thousands of devices or commands must reach idle phones.
+* Recording on the server, ONVIF, push outputs to remote SRT and UDP multicast, alerts, OIDC,
+  device groups and templates, mTLS device certificates, multi-site.
 
-Why Kotlin/Ktor for the server: `core` is pure JVM and already holds `Profile`, `ProfileCodec`,
-`SrtUrl`, validation and the ST 0601 decoder. The server depends on `:core` directly, so the
-profile schema, validation rules and the new wire protocol are one set of classes with one set of
-tests, and a schema change cannot drift between app and server. Go would sit closer to MediaMTX
-but would mean maintaining a second copy of the profile model.
+Not planned
+
+* Transcoding or video analytics on the server. The media path relays only.
+* Cloud SaaS or multi-tenancy. One install serves one organisation.
 
 ---
 
-## 3. Repository layout
+## 2. Architecture
 
 ```
-sparrow/
-  core/      existing; + app.sparrow.core.remote (wire protocol DTOs, shared)
-  app/       existing; + app.sparrow.remote (client), UI additions
-  server/    NEW  Ktor service, PostgreSQL, Flyway migrations, Dockerfile
-  console/   NEW  web console (TypeScript + Vite), built into server resources   [phase 2]
-  deploy/    NEW  docker-compose.yml, mediamtx.yml, Caddyfile, .env.example
-  docs/      this plan, protocol reference, operator guide
+ Phone (Sparrow)                                   On-prem server
+ ┌───────────────────────────────┐                 ┌─────────────────────────────────────────────┐
+ │ StreamingService / Pipeline   │   SRT (TS+KLV)  │ MediaMTX (media plane)                      │
+ │  camera→enc→mux→SrtSender ────┼────────────────▶│  SRT in :8890 ─┬─ RTSP  :8554  ─▶ NVR / VMS │
+ │                               │                 │                ├─ SRT read     ─▶ 4609 tools │
+ │ remote/                       │                 │                ├─ WebRTC :8889 ─▶ browser    │
+ │  DeviceLink (gRPC bidi) ──────┼── HTTP/2+TLS ──▶│                └─ HLS   :8888  ─▶ fallback   │
+ │  TelemetrySpool               │                 │      ▲ auth hook, ready hooks, Control API  │
+ │  RemoteConfig                 │                 │      │                                      │
+ │  CommandDispatcher            │                 │ sparrowd (Go, control plane) :8443          │
+ │  SyncWorker (idle, WorkManager)│                │  DeviceService · AdminService · web UI      │
+ └───────────────────────────────┘                 │  SQLite                                     │
+                                                   └─────────────────────────────────────────────┘
+                                                              ▲ HTTPS (Connect protocol)
+                                                        Operator browser
 ```
 
-`settings.gradle.kts` gains `include(":server")`. The server module uses the Kotlin JVM plugin
-only (no Android), so `./gradlew :core:test :server:test` runs on any CI box without the SDK.
+* **sparrowd** is one Go binary. It holds the API for phones and for the web UI, serves the web
+  UI, stores state in SQLite, and steers MediaMTX.
+* **MediaMTX** is the media plane. It accepts SRT from phones and re-serves each stream over RTSP,
+  SRT, WebRTC and HLS. It asks sparrowd who may publish and read.
+* **Channels are independent.** The media path works when the control link is down and vice
+  versa. A phone can be managed by the backend while streaming to a third-party receiver.
+
+### 2.1 Why this split
+
+* MediaMTX already does the hard protocol work: RTSP for almost every NVR/VMS, WebRTC for the
+  browser, SRT read for KLV-aware tools. Writing that again in Go would cost months.
+* sparrowd talks to MediaMTX only through its documented interfaces: HTTP auth, run hooks and the
+  Control API. MediaMTX can be upgraded or swapped without touching phones.
+* Go fits the control plane well: one static binary, easy on air-gapped hosts, cheap long-lived
+  streams per phone, and the SRT ecosystem (MediaMTX, `datarhei/gosrt`) is in Go if we later need
+  byte-exact forwarders.
 
 ---
 
-## 4. Shared wire protocol (`core/src/main/kotlin/app/sparrow/core/remote/`)
+## 3. Protocol: protobuf + gRPC (Connect)
 
-All messages are `@Serializable` Kotlin classes, JSON on the wire, `ignoreUnknownKeys = true` so
-either side can add fields. A `protocolVersion` integer (start at 1) travels in `hello`; the server
-refuses unknown major versions with a clear error the app shows in Settings.
+### 3.1 Choices
 
-### 4.1 Identity and device description
+| Concern | Choice | Reason |
+| --- | --- | --- |
+| Schema | Protobuf, package `sparrow.v1`, in `proto/` at the repo root | One schema for Kotlin, Go and TypeScript |
+| Tooling | `buf` for lint, `buf breaking` against `main` in CI, `buf generate` for Go and TS | Catches wire breaks before they ship to phones in the field |
+| Server | `connectrpc.com/connect` (connect-go) | One handler speaks gRPC (phones), Connect (browser) and gRPC-Web |
+| Android client | `grpc-kotlin` + `grpc-okhttp` + `protobuf-kotlin-lite` | Google's supported Android stack; coroutines and Flow for the bidi stream. Square's Wire is lighter but reports of hung bidi streams make it the second choice |
+| Browser client | `@connectrpc/connect-web` + `@bufbuild/protobuf` | Unary and server-streaming over plain HTTP/1.1 or HTTP/2 |
+| Validation | `buf.build/go/protovalidate` annotations, enforced in sparrowd | The phone still runs `Profile.validate()`; shared fixtures keep both in line (§3.5) |
 
-```kotlin
-@Serializable data class DeviceInfo(
-    val manufacturer: String, val model: String, val androidSdk: Int,
-    val appVersion: String, val appVersionCode: Int,
-    val cameras: List<CameraSummary>,          // id, facing, zoomRange, encoderSizes (max only)
-    val codecs: List<String>,                  // "H264", "H265"
-)
+The phone's control link is a **gRPC bidirectional stream**. It needs HTTP/2 end to end. On-prem,
+phones usually reach sparrowd directly, so this is fine. A site whose proxy only passes HTTP/1.1
+gets a WebSocket fallback that carries the same `DeviceMessage`/`ServerMessage` frames (phase 4,
+only if a site needs it).
+
+### 3.2 Files
+
+```
+proto/
+  buf.yaml  buf.gen.yaml
+  sparrow/v1/config.proto          Profile and sub-messages, DeviceConfig, DevicePolicy
+  sparrow/v1/telemetry.proto       LinkSample, PositionSample, HealthSample, SessionEvent, StatusSnapshot, TelemetryBatch
+  sparrow/v1/command.proto         Command (oneof), CommandResult
+  sparrow/v1/device.proto          DeviceInfo, CameraInfo
+  sparrow/v1/device_service.proto  phone ↔ server
+  sparrow/v1/admin_service.proto   web UI ↔ server
+  sparrow/v1/media_service.proto   viewer URLs, consumers, outputs
+  testdata/profiles/*.json         shared validation fixtures (protojson)
 ```
 
-### 4.2 Telemetry
+### 3.3 Key messages (sketch)
 
-```kotlin
-@Serializable data class LinkTelemetry(        // one per second while live (from LinkSample)
-    val tsUtcMs: Long, val sessionId: String,
-    val sendKbps: Double, val targetKbps: Int, val rttMs: Double,
-    val packetsSent: Long, val packetsLost: Int, val packetsRetransmitted: Int,
-    val packetsDropped: Int, val sendBufferMs: Int,
-)
-@Serializable data class PositionTelemetry(    // 1 Hz while live, only at telemetry level FULL
-    val tsUtcMs: Long, val sessionId: String,
-    val lat: Double, val lon: Double, val altMsl: Double?, val ellipsoidHeight: Double?,
-    val accuracyM: Float?, val headingDeg: Double?, val elevationDeg: Double?, val rollDeg: Double?,
-    val zoom: Double, val hfovDeg: Double?, val vfovDeg: Double?,
-)
-@Serializable data class HealthTelemetry(      // every 60 s, and on change
-    val tsUtcMs: Long, val batteryPercent: Int, val charging: Boolean,
-    val thermalStatus: Int,                    // PowerManager.THERMAL_STATUS_*
-    val network: String,                       // "wifi" | "cellular" | "ethernet" | "none"
-    val freeStorageMb: Long,
-)
-@Serializable data class SessionEvent(         // start / stop / failure of a stream session
-    val tsUtcMs: Long, val sessionId: String, val kind: Kind,
-    val profileSummary: ProfileSummary,        // name, codec, resolution, fps, bitrate, destination host:port (no secrets)
-    val reason: String? = null,
-) { enum class Kind { STARTED, LIVE, RECONNECTING, STOPPED, FAILED } }
-@Serializable data class StatusSnapshot(       // debounced copy of StreamStatus + extras
-    val tsUtcMs: Long, val link: String, val running: Boolean, val profileId: String?, val profileName: String,
-    val sendKbps: Double, val rttMs: Double?, val lossPercent: Double?, val gnssFix: Boolean,
-    val zoom: Double?, val resolution: String, val liveSinceUtcMs: Long?,
-    val configRevision: Long, val appForeground: Boolean,
-)
-@Serializable data class TelemetryBatch(
-    val link: List<LinkTelemetry> = emptyList(), val position: List<PositionTelemetry> = emptyList(),
-    val health: List<HealthTelemetry> = emptyList(), val events: List<SessionEvent> = emptyList(),
-)
-```
-
-Timestamps are device UTC; every batch also carries `deviceElapsedMs` and the server stores its own
-receive time, so clock skew is detectable and correctable later.
-
-### 4.3 Remote configuration
-
-```kotlin
-@Serializable data class ConfigSnapshot(
-    val revision: Long,
-    val bundle: ProfileBundle,                 // existing class; managed profiles only, secrets stripped
-    val secrets: Map<String, ProfileSecrets>,  // profileId → passphrase; TLS-only, stored via SecretStore
-    val activeProfileId: String? = null,       // null = leave the user's choice alone
-    val policy: DevicePolicy = DevicePolicy(),
-)
-@Serializable data class ProfileSecrets(val passphrase: String = "")
-@Serializable data class DevicePolicy(
-    val telemetryLevel: TelemetryLevel = TelemetryLevel.LINK_AND_HEALTH,
-    val lockManagedProfiles: Boolean = true,   // false lets the user edit managed profiles locally
-    val restartOnConfigChange: Boolean = false,
-)
-enum class TelemetryLevel { OFF, LINK_AND_HEALTH, FULL }  // FULL adds position/attitude
-```
-
-`Profile` gains one field, `val managed: Boolean = false`. The default keeps existing JSON valid.
-
-### 4.4 Commands
-
-```kotlin
-@Serializable sealed class Command {            // discriminator "type"
-    @Serializable @SerialName("camera.zoom")     data class Zoom(val ratio: Double) : Command()
-    @Serializable @SerialName("encoder.bitrate") data class Bitrate(val kbps: Int) : Command()
-    @Serializable @SerialName("encoder.keyframe")data object KeyFrame : Command()
-    @Serializable @SerialName("stream.start")    data object Start : Command()
-    @Serializable @SerialName("stream.stop")     data object Stop : Command()
-    @Serializable @SerialName("stream.restart")  data object Restart : Command()
-    @Serializable @SerialName("profile.select")  data class SelectProfile(val profileId: String, val restart: Boolean = false) : Command()
-    @Serializable @SerialName("config.sync")     data object SyncConfig : Command()
-    @Serializable @SerialName("logs.upload")     data class UploadLogs(val maxBytes: Int = 2_000_000) : Command()
-    @Serializable @SerialName("device.ping")     data object Ping : Command()
+```proto
+// config.proto — mirrors app.sparrow.core.config.Profile field for field.
+message Profile {
+  string id = 1;
+  string name = 2;
+  Destination destination = 3;
+  VideoSettings video = 4;
+  AudioSettings audio = 5;
+  MetadataSettings metadata = 6;
+  AdvancedSettings advanced = 7;
+  bool managed = 8;                         // set by the server; locked on the phone
 }
-@Serializable data class CommandResult(
-    val id: String, val status: Status, val message: String? = null, val applied: JsonElement? = null,
-) { enum class Status { OK, NOT_STREAMING, APP_IN_BACKGROUND, OUT_OF_RANGE, UNSUPPORTED, FAILED } }
+message Destination {
+  SrtMode mode = 1; string host = 2; uint32 port = 3; string stream_id = 4;
+  uint32 latency_ms = 5; string passphrase = 6; uint32 key_length = 7;
+}
+// VideoSettings, AudioSettings, MetadataSettings, AdvancedSettings: same fields as the Kotlin classes.
+
+message DeviceConfig {
+  uint64 revision = 1;                      // bumped on every server-side change
+  repeated Profile profiles = 2;            // managed profiles only; local ones stay on the phone
+  string active_profile_id = 3;             // empty = keep the user's choice
+  DevicePolicy policy = 4;
+}
+message DevicePolicy {
+  TelemetryLevel telemetry_level = 1;       // OFF, LINK_AND_HEALTH (default), FULL (adds position)
+  bool lock_managed_profiles = 2;
+  bool allow_remote_start = 3;              // remote standby, §5.4
+  uint32 telemetry_interval_s = 4;          // default 5
+}
+
+// telemetry.proto
+message LinkSample {                         // 1 Hz while live, from SrtSender stats
+  google.protobuf.Timestamp time = 1; string session_id = 2;
+  double send_kbps = 3; uint32 target_kbps = 4; double rtt_ms = 5;
+  uint64 packets_sent = 6; uint32 packets_lost = 7; uint32 packets_retransmitted = 8;
+  uint32 packets_dropped = 9; uint32 send_buffer_ms = 10;
+}
+message PositionSample {                     // 1 Hz while live, only at TelemetryLevel FULL
+  google.protobuf.Timestamp time = 1; string session_id = 2;
+  double lat = 3; double lon = 4; optional double alt_msl = 5; optional float accuracy_m = 6;
+  optional double heading_deg = 7; optional double elevation_deg = 8; optional double roll_deg = 9;
+  double zoom = 10; optional double hfov_deg = 11; optional double vfov_deg = 12;
+  repeated LatLon footprint = 13;            // frame corners from MetadataComposer, when known
+}
+message HealthSample {                       // every 60 s and on change
+  google.protobuf.Timestamp time = 1; uint32 battery_percent = 2; bool charging = 3;
+  uint32 thermal_status = 4; NetworkType network = 5; uint64 free_storage_mb = 6;
+}
+message StatusSnapshot {                     // on change, debounced to 1 per second
+  StreamState state = 1;                     // IDLE, STANDBY, STARTING, CONNECTING, LISTENING, LIVE, RECONNECTING, FAILED
+  string reason = 2; string active_profile_id = 3; uint64 applied_config_revision = 4;
+  double send_kbps = 5; optional double rtt_ms = 6; optional double loss_percent = 7;
+  bool gnss_fix = 8; double zoom = 9; string resolution = 10;
+  google.protobuf.Timestamp live_since = 11; bool app_foreground = 12;
+}
+message TelemetryBatch {
+  repeated LinkSample link = 1; repeated PositionSample position = 2;
+  repeated HealthSample health = 3; repeated SessionEvent events = 4;
+  int64 device_elapsed_ms = 5;               // lets the server detect device clock skew
+}
+
+// command.proto
+message Command {
+  string id = 1;
+  oneof kind {
+    Start start = 10;  Stop stop = 11;  Restart restart = 12;
+    SelectProfile select_profile = 13;  SetZoom set_zoom = 14;
+    SetBitrate set_bitrate = 15;  RequestKeyFrame key_frame = 16;
+    UploadLogs upload_logs = 17;  Ping ping = 18;
+  }
+}
+message CommandResult {
+  string id = 1;
+  Status status = 2;   // OK, NOT_STREAMING, NOT_IN_STANDBY, OUT_OF_RANGE, REJECTED, UNSUPPORTED, FAILED
+  string message = 3;
+  StatusSnapshot status_after = 4;
+}
+
+// device_service.proto
+service DeviceService {
+  rpc Register(RegisterRequest) returns (RegisterResponse);         // enrollment token or pending approval
+  rpc WaitForApproval(WaitRequest) returns (RegisterResponse);      // long poll while pending
+  rpc Connect(stream DeviceMessage) returns (stream ServerMessage); // control link
+  rpc UploadTelemetry(TelemetryBatch) returns (UploadResponse);     // spool flush when idle
+  rpc UploadLogs(stream LogChunk) returns (UploadResponse);
+  rpc GetConfig(GetConfigRequest) returns (DeviceConfig);           // used by the idle worker
+}
+message DeviceMessage {
+  oneof msg { Hello hello = 1; StatusSnapshot status = 2; TelemetryBatch telemetry = 3;
+              CommandResult command_result = 4; ConfigAck config_ack = 5; }
+}
+message ServerMessage {
+  oneof msg { Welcome welcome = 1; Command command = 2; DeviceConfig config = 3; }
+}
+message ConfigAck { uint64 revision = 1; bool applied = 2; repeated string errors = 3; }
 ```
 
-### 4.5 WebSocket envelope
+`Hello` carries `DeviceInfo` (model, Android version, app version, cameras with zoom ranges and
+encoder sizes, codecs) and the applied config revision. If the server holds a newer revision, it
+sends `DeviceConfig` straight after `Welcome`.
 
-```json
-{ "t": "hello" | "status" | "telemetry" | "cmd" | "cmd.result" | "config.changed" | "ping" | "pong",
-  "id": "uuid (commands/results)", "ts": 1760000000000, "data": { ... } }
-```
+### 3.4 Desired and reported config
 
-| Message | Direction | Payload |
-| --- | --- | --- |
-| `hello` | ↑ | `protocolVersion`, `DeviceInfo`, `configRevision`, initial `StatusSnapshot` |
-| `status` | ↑ | `StatusSnapshot`, on change, debounced to ≤ 1/s |
-| `telemetry` | ↑ | `TelemetryBatch`, every 5 s while live |
-| `cmd` | ↓ | `Command` |
-| `cmd.result` | ↑ | `CommandResult` |
-| `config.changed` | ↓ | `{ revision }`; device then does `GET /v1/device/config` |
-| `ping`/`pong` | both | keepalive every 25 s; two missed pongs = reconnect |
+The server stores **desired** config with a revision. The phone reports the **applied** revision
+in `ConfigAck` and in every `StatusSnapshot`. The web UI shows one of three states per device:
+in sync, pending (phone offline or not yet acked), or rejected with the phone's reasons. This
+makes "set config" reliable for phones that are offline when the operator saves.
+
+### 3.5 Keeping Kotlin, Go and proto in line
+
+The phone keeps its Kotlin `Profile` (kotlinx-serialization) as its internal model, because the UI,
+storage and import/export already use it. A mapper converts at the edge.
+
+* A new JVM module `:protocol` holds the generated Kotlin lite classes and gRPC stubs, plus
+  `ProfileMapper` (`Profile ⇄ sparrow.v1.Profile`). It runs as plain JVM unit tests, like `core`.
+* A round-trip test fills every field with non-default values and checks `toProto → fromProto`
+  equality. A reflection test fails when a field is added to `Profile` but not to the mapper.
+* `proto/testdata/profiles/*.json` holds valid and invalid profiles with the expected errors.
+  Kotlin tests run them through `Profile.validate()`; Go tests run them through protovalidate.
+  A rule change that lands on one side only fails CI on the other.
 
 ---
 
-## 5. Server (`server/`)
+## 4. Server: sparrowd (Go)
 
-### 5.1 Stack
-
-| Concern | Choice | Notes |
-| --- | --- | --- |
-| HTTP/WS | Ktor 3 (Netty) | ContentNegotiation + kotlinx-json, WebSockets, Auth (bearer), CallLogging, Micrometer |
-| DB | PostgreSQL 16, HikariCP, Exposed DSL | Flyway migrations in `server/src/main/resources/db/migration` |
-| Secrets at rest | AES-GCM with a KEK from `SPARROW_KEK` env | Device tokens stored as SHA-256; passphrases encrypted |
-| Metrics | Prometheus endpoint `/metrics` | devices online, live sessions, commands/min |
-| Build | `./gradlew :server:installDist`, multi-stage Dockerfile | Image `sparrow-server` |
-| Tests | JUnit + Ktor test host; Testcontainers Postgres, skipped when Docker is absent | Same skip pattern as `FfmpegInteropTest` |
-
-Configuration is environment variables only (`SPARROW_DB_URL`, `SPARROW_KEK`,
-`SPARROW_OPERATOR_TOKENS`, `SPARROW_PUBLIC_URL`, `SPARROW_MTX_API_URL`, `SPARROW_MTX_PUBLIC_HOST`,
-`SPARROW_MTX_SRT_PASSPHRASE`).
-
-### 5.2 Data model
+### 4.1 Layout
 
 ```
-devices            id uuid, name, token_hash, enrolled_at, last_seen_at, online bool, app_version,
-                   manufacturer, model, android_sdk, device_info jsonb, group_id null, revoked_at null
-enrollment_tokens  token_hash, created_by, expires_at, used_by_device null, label, group_id null
-device_config      device_id pk, revision bigint, bundle jsonb, active_profile_id, policy jsonb,
-                   updated_at, updated_by
-device_secrets     device_id, profile_id, passphrase_enc bytea
-groups             id, name                                   [phase 4: group config templates]
-sessions           id uuid, device_id, started_at, ended_at null, end_reason, profile_summary jsonb,
-                   gateway_path null, gateway_live bool
-link_samples       ts, device_id, session_id, send_kbps, target_kbps, rtt_ms, pkt_sent, pkt_lost,
-                   pkt_retrans, pkt_dropped, snd_buf_ms            (index (device_id, ts))
-position_samples   ts, device_id, session_id, lat, lon, alt_msl, ell_h, acc_m, heading, elev, roll,
-                   zoom, hfov, vfov
-health_samples     ts, device_id, battery, charging, thermal, network, free_mb
-commands           id uuid, device_id, type, args jsonb, issued_by, issued_at, delivered_at null,
-                   completed_at null, status, message, applied jsonb
-log_uploads        id, device_id, received_at, bytes, storage_path
-gateway_streams    path pk, device_id, publish_user, publish_pass_enc, created_at
+backend/
+  go.mod                         module github.com/magasb1/sparrow/backend, Go 1.25+
+  cmd/sparrowd/main.go           flags/env, wiring, graceful shutdown
+  internal/
+    gen/                         buf-generated Go (committed)
+    device/                      DeviceService handlers: register, connect, uploads
+    admin/                       AdminService and MediaService handlers
+    hub/                         live device sessions, command routing, watcher fan-out
+    store/                       SQLite access (sqlc), migrations (goose)
+    telemetry/                   ingest, downsampling, retention
+    media/                       MediaMTX: auth hook, ready hooks, Control API reconciliation
+    auth/                        users, sessions, device tokens, enrollment tokens
+    tlsboot/                     self-signed CA and server cert on first run, SPKI pin
+  web/                           React + Vite + connect-web; build output embedded with go:embed
+deploy/
+  docker-compose.yml             sparrowd + mediamtx (pinned versions)
+  mediamtx.yml
+  systemd/                       sparrowd.service, mediamtx.service for bare-metal installs
 ```
 
-Retention job (daily): link/position/health samples older than `SPARROW_RETENTION_DAYS`
-(default 30) are deleted; sessions and commands are kept for a year. Volume estimate: one live
-device produces 86k link rows/day (~10 MB); 50 devices streaming 8 h/day for 30 days is ~2 GB,
-which plain Postgres handles without TimescaleDB.
+### 4.2 Libraries
 
-### 5.3 HTTP API
-
-Device-facing, `Authorization: Bearer <deviceToken>` (except enroll):
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| POST | `/v1/enroll` | `{ enrollmentToken, device: DeviceInfo, name? }` → `{ deviceId, deviceToken, serverTimeMs, wsUrl }` |
-| GET | `/v1/device/config` | `ConfigSnapshot`; honours `If-None-Match: <revision>` → 304 |
-| POST | `/v1/device/telemetry` | `TelemetryBatch` (spool flush from WorkManager) |
-| POST | `/v1/device/logs` | gzip body, ≤ 4 MB; redacted on device before upload |
-| POST | `/v1/device/token/rotate` | returns a new token, old one valid for 5 min |
-| DELETE | `/v1/device` | self-unenroll; server deletes token and secrets, keeps history |
-| WS | `/v1/device/ws` | control channel (§4.5) |
-
-Operator-facing, `Authorization: Bearer <operatorToken>`:
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| POST | `/v1/enrollments` | create enrollment token (+ `sparrow://enroll?...` URL and QR PNG) |
-| GET | `/v1/devices` | list with online/live state and last status |
-| GET | `/v1/devices/{id}` | detail: info, status, config revision, current session |
-| PUT | `/v1/devices/{id}/config` | replace managed bundle/secrets/policy; bumps revision; pushes `config.changed` |
-| PATCH | `/v1/devices/{id}` | rename, group |
-| DELETE | `/v1/devices/{id}` | revoke (token invalid, WS closed) |
-| POST | `/v1/devices/{id}/commands` | body `Command`; `?wait=5s` returns the `CommandResult` or 202 |
-| GET | `/v1/devices/{id}/commands` | history |
-| GET | `/v1/devices/{id}/telemetry/{link|position|health}?from&to&step` | time series, optional bucketing |
-| GET | `/v1/devices/{id}/sessions` | session list |
-| GET | `/v1/devices/{id}/logs` / `/logs/{uploadId}` | uploaded logs |
-| POST | `/v1/devices/{id}/gateway` | enable hosted gateway: provisions path + credentials, adds the managed profile |
-| GET | `/v1/devices/{id}/stream` | playback: WHEP URL, HLS URL, SRT read URL with a 10-min read token |
-| WS | `/v1/console/ws` | live status/telemetry fan-out for the console |
-
-MediaMTX-facing (internal network only; `SPARROW_MTX_HOOK_SECRET` header):
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| POST | `/v1/mtx/auth` | MediaMTX `authMethod: http` body `{user,password,ip,action,path,protocol,id,query}` → 200/401 |
-| POST | `/v1/mtx/hooks/ready`, `/notready` | from `runOnReady`/`runOnNotReady` (`runOnAvailable`/`runOnUnavailable` on current main): `path`, `sourceId`, `query` |
-
-### 5.4 Operator authentication
-
-Phase 1: static bearer tokens from `SPARROW_OPERATOR_TOKENS` (comma-separated, each
-`label:token`). Phase 4: OIDC (any provider) with roles `viewer` / `operator` / `admin`.
-*(decide: is static-token login acceptable for the first deployments?)*
-
-### 5.5 Command execution on the server
-
-1. Insert `commands` row, status `PENDING`.
-2. If the device's WS is connected, send `cmd`; set `delivered_at`. Otherwise fail fast with
-   `DEVICE_OFFLINE` (commands are not queued: a zoom issued at 10:00 must not fire at 10:20).
-3. On `cmd.result`, update the row and complete any waiting HTTP request. Timeout 10 s → `TIMEOUT`.
-
----
-
-## 6. App changes (`app/src/main/kotlin/app/sparrow/remote/`)
-
-### 6.1 Components
-
-| Class | Responsibility |
+| Need | Library |
 | --- | --- |
-| `BackendConfig` | Server URL, device id, enabled flags, telemetry level, config revision, last sync. SharedPreferences `backend`; token in `SecretStore` under key `backend-token`. |
-| `BackendClient` | HTTP via OkHttp + kotlinx-serialization: enroll, config, telemetry, logs, rotate. Retries with `Backoff` from `core`. |
-| `ControlChannel` | OkHttp WebSocket; `hello` on open; ping/pong; reconnect with `Backoff`; exposes `incoming: Flow<Envelope>` and `send()`. |
-| `BackendSession` | Process-wide object (like `StreamController`). Reference-counted *holders*: `MainActivity` (onStart/onStop) and `StreamingService` (start/stop). Connected while holders > 0 and backend enabled; disconnected otherwise. Owns the collector, sync and dispatcher below. |
-| `TelemetryCollector` | Observes `StreamController.status`, `SrtSender` stats (via a new `StreamController.linkSamples` flow), `SensorHub` (via a new `StreamController.position` flow at 1 Hz), battery/thermal/network. Builds `TelemetryBatch` every 5 s. Respects `TelemetryLevel`. |
-| `TelemetrySpool` | Disk-backed JSONL queue in `filesDir/telemetry/`, capped at 20 MB (oldest dropped). Batches go to the spool first; the channel or the worker drains it. Nothing is lost when the link drops mid-stream. |
-| `RemoteConfigSync` | `GET /v1/device/config` on connect, on `config.changed`, and from the worker. Applies via `ProfileRepository.applyManaged(snapshot)` (new). |
-| `CommandDispatcher` | Maps `Command` → existing APIs (table below), returns `CommandResult`. |
-| `BackendSyncWorker` | WorkManager periodic (15 min, network required): drain spool over HTTPS, check config revision, upload pending logs. A one-shot expedited run is enqueued when a stream stops. |
+| RPC | `connectrpc.com/connect`, `google.golang.org/protobuf`, `buf.build/go/protovalidate` |
+| HTTP/2 | `net/http` with TLS; unencrypted HTTP/2 only on loopback for development |
+| Database | `modernc.org/sqlite` (pure Go, no cgo), `sqlc` for typed queries, `pressly/goose` migrations |
+| Passwords | `golang.org/x/crypto/argon2` |
+| Logs and metrics | `log/slog` (JSON), `prometheus/client_golang` on `/metrics` |
+| Later: forwarders | `github.com/datarhei/gosrt` (pure Go SRT) |
 
-New dependencies: `com.squareup.okhttp3:okhttp` (HTTP + WebSocket), `androidx.work:work-runtime-ktx`.
-Both are small and well-maintained; no Play Services.
+SQLite keeps the install to one binary and one file. It comfortably handles tens of phones with
+1 Hz telemetry. The store sits behind an interface so PostgreSQL can be added if a site outgrows it.
 
-### 6.2 Hooks into existing code
+### 4.3 Data model
 
-* `StreamController`: add `linkSamples: SharedFlow<LinkSample>`, `position: StateFlow<PositionTelemetry?>`,
-  and a `pipelineCommands: MutableSharedFlow<PipelineCommand>` (`SetBitrate`, `RequestKeyFrame`,
-  `Restart`) that `StreamingService` collects like it already collects `zoom`.
-* `StreamPipeline`: `setBitrate(kbps)` (calls `encoder.setBitrate` and caps `abr.maxKbps`), expose
-  `requestKeyFrame()`. Publish `LinkSample` to the controller from `onStats`.
-* `StreamingService`: `restartPipeline()` that reuses the restart path in `onPipelineFailure`
-  without counting against the 5-per-minute failure budget; `ACTION_RESTART` intent.
-* `ProfileRepository`: `applyManaged(snapshot)` replaces all `managed = true` profiles with the
-  snapshot's set (secrets into `SecretStore`), leaves local ones untouched, selects
-  `activeProfileId` when given. `save()` refuses edits to managed profiles when
-  `policy.lockManagedProfiles`.
-* `AppLog`: unchanged; uploads pass through `exportTo`, so redaction still applies.
-* `SparrowApp.onCreate`: `BackendSession.init(this)`; schedule the worker if enrolled.
-* `MainActivity`: `BackendSession.acquire("ui")` in `onStart`, `release` in `onStop`; handle
-  `sparrow://enroll?...` intents (QR scanned by the system camera app) via an intent filter.
-* Manifest: add `WorkManager` nothing extra; `android:networkSecurityConfig` allowing cleartext
-  only for `localhost`/`10.0.2.2` in debug builds. Release builds are HTTPS-only.
+```
+users              id, username, password_hash, role (admin|operator|viewer), created_at
+sessions_web       token_hash, user_id, expires_at
+devices            id, alias (unique, used in stream paths), name, status (pending|active|revoked),
+                   token_hash, pairing_code, registered_at, approved_by, last_seen_at,
+                   device_info (proto bytes), app_version
+enrollment_tokens  token_hash, label, created_by, expires_at, max_uses, uses, auto_alias_prefix
+device_config      device_id, desired_revision, desired (proto bytes), applied_revision,
+                   applied_at, rejected_errors
+device_secrets     device_id, profile_id, passphrase (AES-GCM, key from SPARROW_KEK or key file)
+stream_sessions    id, device_id, started_at, ended_at, end_reason, profile_summary, gateway_path
+link_samples       device_id, ts, session_id, send_kbps, target_kbps, rtt_ms, sent, lost, retrans, dropped, snd_buf_ms
+position_samples   device_id, ts, session_id, lat, lon, alt, acc, heading, elev, roll, zoom, hfov, vfov, footprint
+health_samples     device_id, ts, battery, charging, thermal, network, free_mb
+commands           id, device_id, kind, args (proto bytes), issued_by, issued_at, delivered_at,
+                   completed_at, status, message
+log_uploads        id, device_id, received_at, size, path
+consumers          id, name, username, password_hash, allowed_paths (glob), protocols, created_by
+```
 
-### 6.3 Command mapping
+Retention runs nightly. Raw samples are kept 14 days by default; 1-minute averages are kept a year.
 
-| Command | Implementation | Result when not possible |
-| --- | --- | --- |
-| `camera.zoom` | `StreamController.setZoom(ratio.coerceIn(zoomRange))`; UI follows automatically because it observes the same flow | `OUT_OF_RANGE` (applied value returned), `NOT_STREAMING` if idle and no idle camera |
-| `encoder.bitrate` | `pipelineCommands.emit(SetBitrate)`; also caps ABR max so ABR cannot raise it back | `NOT_STREAMING` |
-| `encoder.keyframe` | `pipelineCommands.emit(RequestKeyFrame)` | `NOT_STREAMING` |
-| `stream.stop` | `StreamingService.stop(context)` | `NOT_STREAMING` |
-| `stream.restart` | `pipelineCommands.emit(Restart)` | `NOT_STREAMING` |
-| `stream.start` | If the activity is resumed: `MainActivity` runs its existing permission + start path. Otherwise post a high-priority notification "Operator asks you to go live" whose action opens the activity and starts; return `APP_IN_BACKGROUND` | — |
-| `profile.select` | `profiles.select(id)`; `restart = true` → `Restart` when live | `FAILED` if the id is unknown |
-| `config.sync` | `RemoteConfigSync.syncNow()` | — |
-| `logs.upload` | `AppLog.exportTo` → gzip → `POST /v1/device/logs` | `FAILED` with message |
-| `device.ping` | `OK` with `StatusSnapshot` in `applied` | — |
+### 4.4 The hub
 
-Every applied command shows a short on-screen banner ("Operator set zoom 2.0×") and an `AppLog`
-line, so the person holding the phone always knows the stream changed under them.
+`hub` holds one entry per connected phone: its send channel, last `StatusSnapshot` and pending
+commands. It does three jobs:
 
-### 6.4 Lifecycle and Android constraints
+1. **Commands.** `AdminService.SendCommand` stores the command, pushes it to the phone's stream and
+   waits up to 10 s for `CommandResult`. A phone that is not connected fails at once with
+   `DEVICE_OFFLINE`. Commands are never queued, so a zoom issued at 10:00 cannot fire at 10:20.
+2. **Config.** Saving config bumps the revision and, if the phone is connected, pushes
+   `DeviceConfig` right away. Otherwise it goes out on the next `Connect` or idle `GetConfig`.
+3. **Watchers.** `AdminService.WatchDevices` is a server stream to the web UI that sends status
+   and telemetry deltas, so the device list and viewer update live without polling.
 
-* **Live:** the foreground service holds a `BackendSession` reference, so the WebSocket stays up for
-  the whole stream, screen off included, under the existing wake lock.
-* **App on screen, idle:** the activity holds the reference; commands such as `stream.start`,
-  `profile.select`, `config.sync` work.
-* **Idle, backgrounded:** no socket. Doze would kill it anyway and a persistent `dataSync` service
-  is limited to 6 h/day on API 34+. `BackendSyncWorker` keeps config fresh and telemetry flushed.
-  The console shows the device as "reachable: no (last seen hh:mm)".
-* **Remote start** needs the app in the foreground because camera access from a background-started
-  foreground service is denied on API 30+. The notification fallback above is the honest version
-  of "remote start".
-* **Battery:** WebSocket keepalive every 25 s costs little against camera + encoder + SRT. Telemetry
-  is batched (one message per 5 s) and the spool means no retry storms.
-* **OEM task killers** already affect the stream itself; the backend session rides along and needs
-  nothing extra.
+Keepalive: gRPC pings every 20 s from the phone, so cellular NAT timeouts do not drop the link.
+The server marks a phone offline after 45 s with no traffic.
 
-### 6.5 UI
+### 4.5 APIs
 
-* New `Screen.Backend` reached from the main menu: server URL; "Enroll" via pasted
-  `sparrow://enroll?server=…&token=…` URL or QR from image (reuse the existing `srt://` paste/QR
-  code paths, generalised); connection state and last sync time; telemetry level (Off / Link &
-  health / Full incl. position) with a plain-language description of what each sends; "Unenroll"
-  (deletes token, managed profiles and the spool).
-* Main screen: a small cloud chip in `InfoChips` (connected / syncing / offline); banner on applied
-  commands.
-* Profiles screen: lock badge on managed profiles; Settings shows "Managed by <server>. Duplicate
-  as local profile to edit" when `lockManagedProfiles` is set.
-* Onboarding: one sentence that the app sends nothing anywhere unless a backend is enrolled.
-* README: NFR-5 row becomes "no telemetry unless a backend is enrolled and enabled".
+`DeviceService` is in §3.3. The web-facing services:
+
+```proto
+service AdminService {
+  rpc Login(LoginRequest) returns (LoginResponse);                       // sets an HttpOnly cookie
+  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
+  rpc GetDevice(GetDeviceRequest) returns (Device);
+  rpc ApproveDevice(ApproveDeviceRequest) returns (Device);               // pending → active, sets alias
+  rpc UpdateDevice(UpdateDeviceRequest) returns (Device);                 // rename, alias
+  rpc RevokeDevice(RevokeDeviceRequest) returns (Device);
+  rpc CreateEnrollment(CreateEnrollmentRequest) returns (Enrollment);     // token + QR payload + PNG
+  rpc GetConfig(GetDeviceConfigRequest) returns (DeviceConfigState);      // desired + applied + errors
+  rpc SetConfig(SetDeviceConfigRequest) returns (DeviceConfigState);
+  rpc SendCommand(SendCommandRequest) returns (CommandResult);
+  rpc ListCommands(ListCommandsRequest) returns (ListCommandsResponse);
+  rpc QueryTelemetry(QueryTelemetryRequest) returns (QueryTelemetryResponse); // range, bucket size
+  rpc WatchDevices(WatchDevicesRequest) returns (stream DeviceEvent);
+  rpc ListLogs / GetLog / ListUsers / CreateUser / ...
+}
+service MediaService {
+  rpc GetViewer(GetViewerRequest) returns (ViewerInfo);       // WHEP + HLS URLs with a 10-min read token
+  rpc EnableGateway(EnableGatewayRequest) returns (Device);    // adds the managed gateway profile, §6.2
+  rpc ListStreams(ListStreamsRequest) returns (ListStreamsResponse); // per alias: live, readers, URLs
+  rpc CreateConsumer / ListConsumers / DeleteConsumer (...);   // NVR/VMS credentials, §6.3
+}
+```
+
+MediaMTX-facing endpoints are plain HTTP on a loopback or internal listener, guarded by a shared
+secret header: `POST /mtx/auth`, `POST /mtx/hooks/ready`, `POST /mtx/hooks/notready`.
+
+### 4.6 Web UI
+
+React + TypeScript + Vite, talking to sparrowd through connect-web with the generated TS clients.
+The build is embedded in the binary, so there is nothing to deploy separately.
+
+First release screens:
+
+* **Devices.** List with state, profile, bitrate, battery, last seen, config sync state. Pending
+  registrations with an Approve button that shows the phone's pairing code.
+* **Device.** Live viewer, status panel, link chart for the last 15 minutes, map with position and
+  frame footprint at `FULL`, controls (Start, Stop, Restart, zoom slider within the reported range,
+  bitrate, keyframe, profile picker), command history, logs.
+* **Config.** Profile editor generated from the same fields as the app's Settings, validated by
+  protovalidate on save, with per-device desired vs applied state.
+* **Streams.** One row per alias with copyable RTSP, SRT and HLS URLs and live reader count.
+* **Consumers, Users, Enrollment.** Credentials for NVR/VMS, local users, QR codes.
 
 ---
 
-## 7. Hosted SRT gateway (MediaMTX)
+## 5. App changes
 
-### 7.1 Topology
+### 5.1 New code (`app/src/main/kotlin/app/sparrow/remote/`)
 
-```
-device ── SRT publish ──▶ MediaMTX :8890 ── SRT read ──▶ 4609 consumers (KLV intact)
-                                        ── WebRTC/WHEP :8889 ──▶ console preview (video only)
-                                        ── HLS :8888 ──▶ fallback preview
-```
+| Class | Job |
+| --- | --- |
+| `BackendSettings` | Server URL, device id, alias, server certificate pin, telemetry level, applied revision. Token in `SecretStore` under `backend-token`. |
+| `DeviceLink` | gRPC channel (OkHttp transport, TLS with the pinned certificate). Runs `Connect` as a Flow. Reconnects with `Backoff` from `core`. Sends `Hello`, status, telemetry, results; emits incoming commands and config. |
+| `BackendSession` | Process-wide owner. Reference-counted holders: the visible activity, the streaming service, and remote standby. Link is up while any holder exists. |
+| `TelemetryCollector` | Observes `StreamController` (status, new link-sample and position flows) and battery, thermal and network. Builds a `TelemetryBatch` every 5 s, filtered by `TelemetryLevel`. |
+| `TelemetrySpool` | Length-prefixed protobuf records in `filesDir/telemetry/`, capped at 20 MB, oldest dropped first. Every batch is written here first, then drained over the link or by the worker. |
+| `RemoteConfig` | Applies `DeviceConfig` through a new `ProfileRepository.applyManaged()`, validates first, answers with `ConfigAck`. |
+| `CommandDispatcher` | Maps `Command` to existing APIs (§5.3). |
+| `SyncWorker` | WorkManager, every 15 min with network: drain spool, `GetConfig` if the revision moved, pending log upload. Also one run right after a stream stops. |
 
-`deploy/mediamtx.yml` essentials:
+New dependencies: `grpc-okhttp`, `grpc-kotlin-stub`, `protobuf-kotlin-lite`, `androidx.work`.
+They add roughly 2 MB to the APK.
+
+### 5.2 Hooks in existing code
+
+* `StreamController`: add a `linkSamples` shared flow, a `position` state flow at 1 Hz, and a
+  `pipelineCommands` flow (`SetBitrate`, `KeyFrame`, `Restart`) that `StreamingService` collects
+  the same way it already collects `zoom`.
+* `StreamPipeline`: `setBitrate(kbps)` that also caps ABR, `requestKeyFrame()`, publish
+  `LinkSample` from `onStats`, publish position and footprint from `writeKlv` at 1 Hz.
+* `StreamingService`: a restart path that does not count against the 5-failures-a-minute budget;
+  a `STANDBY` mode (§5.4).
+* `ProfileRepository`: `applyManaged(config)` replaces all managed profiles, keeps local ones,
+  stores passphrases in `SecretStore`, selects `active_profile_id` when set. Managed profiles are
+  read-only in Settings when `lock_managed_profiles` is set.
+* `Profile`: one new field `managed: Boolean = false`. Old JSON still loads.
+* `MainActivity`: holds `BackendSession` while started; handles `sparrow://enroll?...` links.
+
+### 5.3 Command mapping
+
+| Command | On the phone | When it cannot run |
+| --- | --- | --- |
+| Start | In standby: start the pipeline in the running service. App on screen: the existing permission and start path. | `NOT_IN_STANDBY` plus a notification asking the user to go live |
+| Stop | `StreamingService.stop()`; standby stays armed if it was | `NOT_STREAMING` |
+| Restart | `pipelineCommands.emit(Restart)` | `NOT_STREAMING` |
+| SelectProfile | `profiles.select(id)`, restart if live and asked | `REJECTED` for an unknown id |
+| SetZoom | `StreamController.setZoom(clamped)`; the UI follows | `OUT_OF_RANGE` returns the applied value |
+| SetBitrate | `pipelineCommands.emit(SetBitrate)` | `NOT_STREAMING` |
+| RequestKeyFrame | `pipelineCommands.emit(KeyFrame)` | `NOT_STREAMING` |
+| UploadLogs | `AppLog.exportTo` (redacted) → `UploadLogs` stream | `FAILED` with reason |
+
+Every applied command shows a short banner on the phone and writes an `AppLog` line, so the person
+holding the phone knows the stream was changed remotely.
+
+### 5.4 Remote start: standby mode
+
+Android does not let a foreground service started from the background open the camera (API 30+).
+So "start from the web" needs the service already running in the foreground.
+
+* The user taps **Remote standby** on the main screen (or it is the default in a managed profile
+  with `allow_remote_start`). That starts `StreamingService` while the app is visible, with the
+  camera, location and microphone service types, and an ongoing "Standby: waiting for operator"
+  notification with a Disarm action.
+* In standby the service holds the control link and a partial wake lock only. The camera is closed
+  and nothing is encoded, so battery use is small.
+* A Start command opens the camera and starts the pipeline. Stop returns to standby.
+* **Phase 0 spike:** confirm on target devices (Android 12–16) that a camera-type service started
+  while visible can open the camera hours later with the screen off, and that its network survives
+  Doze. If not, the fallback is to keep the camera open at a low frame rate in standby.
+* Without standby, Start from the web posts a high-priority notification that opens the app and
+  starts the stream with one tap.
+
+### 5.5 Registration
+
+Two ways, both supported:
+
+1. **QR enrollment.** The admin creates an enrollment in the web UI. The QR holds
+   `sparrow://enroll?u=https://host:8443&t=<token>&pin=<sha256 of the server key>`. The phone
+   scans it (system camera app, or QR from image as today), calls `Register`, and is active at once.
+2. **URL and approval.** The user types the server URL. The phone calls `Register` without a token,
+   shows a 6-digit pairing code, and waits in `WaitForApproval`. The admin checks the code and
+   approves in the web UI. The phone confirms the server certificate fingerprint on first contact.
+
+`RegisterResponse` returns the device id, a random 32-byte token (stored hashed on the server and
+in `SecretStore` on the phone), the alias, and the server time.
+
+### 5.6 UI
+
+* **Backend screen** from the menu: register (scan QR, paste link, or URL + pairing code),
+  connection state, last sync, telemetry level with a plain description of what each sends,
+  Unregister (wipes token, managed profiles and the spool).
+* **Main screen:** small link chip (connected, offline, standby), standby toggle when allowed,
+  banner for remote commands.
+* **Profiles and Settings:** lock badge and read-only fields on managed profiles, "Duplicate as
+  local" to edit a copy.
+* README NFR-5 line becomes "no telemetry unless a backend is registered and enabled".
+
+---
+
+## 6. Media: viewer and distribution
+
+### 6.1 MediaMTX setup
 
 ```yaml
 authMethod: http
-authHTTPAddress: http://sparrow-server:8080/v1/mtx/auth
-authHTTPExclude: [{action: api}, {action: metrics}, {action: pprof}]
+authHTTPAddress: http://127.0.0.1:9100/mtx/auth     # sparrowd internal listener
+authHTTPExclude: [{action: api}, {action: metrics}]
 api: yes
-apiAddress: :9997
-srt: yes
-srtAddress: :8890
-webrtc: yes
-hls: yes
+apiAddress: 127.0.0.1:9997
+srt: yes          # :8890, phones publish, SRT readers
+rtsp: yes         # :8554, NVR/VMS
+webrtc: yes       # :8889 (+ ICE UDP), browser viewer via WHEP
+hls: yes          # :8888, fallback viewer
 pathDefaults:
-  srtPublishPassphrase: ${SPARROW_MTX_SRT_PASSPHRASE}   # shared link encryption, see 7.3
-  runOnReady: curl -s -X POST -H "X-Hook-Secret: $SPARROW_MTX_HOOK_SECRET" \
-     http://sparrow-server:8080/v1/mtx/hooks/ready -d "path=$MTX_PATH&sourceId=$MTX_SOURCE_ID&query=$MTX_QUERY"
-  runOnNotReady: curl ... /v1/mtx/hooks/notready ...
+  runOnReady: /usr/local/bin/sparrow-hook ready      # posts MTX_PATH, MTX_SOURCE_ID to sparrowd
+  runOnNotReady: /usr/local/bin/sparrow-hook notready
 paths:
-  '~^dev/[A-Za-z0-9-]+$': {}
+  '~^cam/[a-z0-9-]+$': {}
 ```
 
-(On current MediaMTX main the hooks are named `runOnAvailable`/`runOnUnavailable`; pin a version in
-`docker-compose.yml` and match the names to it.)
+`sparrow-hook` is a tiny helper built from the same Go module, so the install needs no curl. Hook
+names differ between MediaMTX releases (`runOnReady` vs `runOnAvailable`); the pinned version
+decides. sparrowd also reconciles against `GET /v3/paths/list` every 30 s in case a hook is lost.
 
-### 7.2 Provisioning flow
+### 6.2 Phones publishing to the server
 
-1. Operator clicks "Enable hosted gateway" on a device (or ticks it at enrollment).
-2. Server creates `gateway_streams` row: path `dev/<short-id>`, `publish_user = <short-id>`,
-   `publish_pass = random 24 chars`.
-3. Server adds a managed profile "Hosted gateway" to the device config: caller mode,
-   `host = SPARROW_MTX_PUBLIC_HOST`, `port = 8890`,
-   `streamId = publish:dev/<short-id>:<user>:<pass>`, `passphrase = shared SRT passphrase`,
-   `latencyMs` from an operator default. Optionally marks it active. Revision bumps,
-   `config.changed` goes out, the phone pulls the config and is ready to go live.
-4. Device goes live → MediaMTX calls `/v1/mtx/auth` with `action=publish`, `path=dev/<id>`,
-   `user`, `password` → server checks the row, device not revoked → 200.
-5. `runOnReady` → server marks the session `gateway_live = true`; the console switches the
-   preview tile on. A 30 s reconciliation against `GET /v3/paths/list` on the Control API catches
-   missed hooks.
-6. Console preview: `GET /v1/devices/{id}/stream` returns `https://mtx.example/dev/<id>/whep`
-   plus a 10-minute read token; the console passes it as the WHEP `pass`; MediaMTX asks
-   `/v1/mtx/auth` with `action=read` and the server validates the token.
-7. Downstream 4609 consumers get `srt://mtx.example:8890?streamid=read:dev/<id>:<ruser>:<rpass>`
-   with per-consumer read credentials created by the operator.
+`MediaService.EnableGateway` gives the phone a managed profile "On-prem gateway": caller mode to
+the server's SRT port, stream ID `publish:cam/<alias>:<device-id>:<publish-secret>`, and the site's
+SRT passphrase. MediaMTX asks `/mtx/auth`; sparrowd checks that the device is active and the secret
+matches. Revoking a device blocks its next publish and kicks the current one through the Control API.
 
-### 7.3 Known properties and risks of the MediaMTX path
+Paths use the device **alias**, not its id. When a phone is replaced, the new one takes the alias
+and every NVR keeps working without reconfiguration.
 
-| Topic | Finding | Plan |
+### 6.3 Consumers (NVR, VMS, 4609 tools)
+
+| Consumer | URL | Notes |
 | --- | --- | --- |
-| KLV passthrough | SRT in → SRT out keeps the KLV data track (reported working on current MediaMTX; FFmpeg reads it as `klv (KLVA)`). RTSP out re-wraps KLV as RFC 6597, which FFmpeg does not decode. | Document SRT read as the 4609 path. **Phase 0 spike:** confirm sync and async carriage both survive byte-exact using `TsDemuxer` + `St0601Decoder` from `core` against a pinned MediaMTX version; add this as an opt-in integration test like `FfmpegInteropTest`. |
-| Server-side recording | MediaMTX records fMP4/MPEG-TS; whether KLV lands in the recording is unverified. | Spike. Fallback: a tiny `sparrow-archiver` container running `ffmpeg -i srt://mtx?streamid=read:… -c copy -f mpegts` per live path, triggered by the ready hook. |
-| H.265 preview | Browser WebRTC H.265 support is patchy. | Console falls back to HLS; recommend H.264 in gateway profiles; the operator sees a hint. |
-| Credentials in `streamid` | SRT sends the stream ID in the handshake in clear. The media is still encrypted by the passphrase. | Per-device random publish credentials, revocable, rotated when the gateway profile is re-provisioned. Per-device SRT passphrases need per-device path config via the Control API (`POST /v3/config/paths/add/{name}`) instead of the regex path; deferred to phase 4 unless required. *(decide)* |
-| If the KLV spike fails | | Replace MediaMTX for the 4609 leg with a raw-passthrough SRT relay (e.g. `voc/srtrelay`, Go, HTTP auth) and have MediaMTX pull from it for preview only. The server API does not change; only `deploy/` and the provisioning strings do. |
+| NVR/VMS (Milestone, Genetec, Nx Witness, Frigate, Blue Iris, ...) | `rtsp://user:pass@host:8554/cam/<alias>` | H.264 recommended; H.265 where the VMS supports it. KLV is not used by these. |
+| KLV-aware tools (4609 players, ISR exploitation) | `srt://host:8890?streamid=read:cam/<alias>:user:pass` | MediaMTX keeps the KLV track on SRT read. RTSP re-wraps KLV as RFC 6597, which FFmpeg does not decode. |
+| Browser viewer | WHEP via the web UI | Video only; the web UI draws telemetry beside it |
+| Simple players | HLS `http://host:8888/cam/<alias>/index.m3u8` | Several seconds of latency |
+
+Each consumer gets its own credentials from the web UI, limited to path globs and protocols.
+`/mtx/auth` checks them with `action=read`.
+
+### 6.4 Later: push outputs and byte-exact forwarding
+
+Some sites need sparrowd to push: SRT caller to a remote listener, or MPEG-TS over UDP multicast
+(common for 4609 networks). MediaMTX does not push to arbitrary targets. Plan: a `forward` package
+in sparrowd using `datarhei/gosrt` reads each stream from MediaMTX over SRT and writes the TS
+packets unchanged to the configured outputs. If the KLV spike shows that MediaMTX alters KLV, the
+same package can take the phone's SRT directly and feed MediaMTX for viewing only, keeping the
+4609 path byte-exact.
+
+### 6.5 Risks
+
+| Risk | Plan |
+| --- | --- |
+| KLV through MediaMTX | Phase 0 spike: publish a `TsMuxer` stream, read it back over SRT, compare KLV byte-exact with `TsDemuxer` and `St0601Decoder`, sync and async carriage. Keep it as an opt-in integration test. |
+| H.265 in browsers | Viewer falls back to HLS; the web UI suggests H.264 for gateway profiles. |
+| Credentials in the SRT stream ID | The stream ID crosses the network in the clear; the media is encrypted by the SRT passphrase. Per-device publish secrets can be rotated or revoked. |
+| WebRTC through firewalls | On-prem LAN works directly. Remote viewers need the ICE UDP port open or a TURN server (later). |
 
 ---
 
-## 8. Security and privacy
+## 7. Security
 
-* TLS everywhere outside the Compose network (Caddy terminates; Let's Encrypt or an operator-supplied
-  cert). Debug builds may use cleartext to `localhost`/`10.0.2.2` only.
-* Device tokens: 32 random bytes, stored SHA-256 on the server, in `SecretStore` on the phone,
-  rotated on demand, deleted on revoke. Upgrade path: Keystore EC key pair with signed challenge
-  (non-exportable key) if operators ask for it.
-* Enrollment tokens: single-use by default, expire after 24 h, created only by operators.
-* Passphrases: encrypted at rest on the server (AES-GCM, KEK from env); never in logs on either side
-  (`AppLog.addSecret` on the phone, a redacting log filter on the server).
-* MediaMTX hook and auth endpoints: internal network only plus a shared header secret; never on the
-  public listener.
-* Telemetry levels enforced on the device, not just the server; position is only sent at `FULL`.
-  The Backend screen states in plain words what each level sends.
-* Rate limits on `/v1/enroll` and `/v1/mtx/auth`; max body sizes on telemetry and logs.
-* Audit: every command and config change records `issued_by` / `updated_by`.
-* Unenroll wipes token, managed profiles, spool and backend prefs; the server keeps history unless
-  the operator deletes the device.
+* **TLS everywhere.** With no certificate configured, sparrowd creates a private CA and a server
+  certificate on first run. The phone pins the key hash from the QR or the first approved contact,
+  so self-signed works without trusting a public CA. Sites can supply their own certificate.
+* **Device auth.** Bearer token over TLS in phase 1. Later: a Keystore key pair on the phone, a CSR
+  at registration, and mTLS with a certificate from the sparrowd CA.
+* **Web auth.** Local users with argon2 hashes and HttpOnly session cookies; roles admin, operator
+  (commands and config) and viewer (read only). OIDC later.
+* **Secrets.** SRT passphrases encrypted at rest on the server and in the Android Keystore on the
+  phone; never logged on either side.
+* **Telemetry level** is enforced on the phone; position is sent only at `FULL`.
+* **Audit.** Every command, config change, approval and revocation stores the user who did it.
+* **Air-gapped friendly.** sparrowd makes no outbound calls; the web UI loads no CDN assets.
 
 ---
 
-## 9. Phases, deliverables, acceptance
+## 8. Repository
 
-Estimates are for one developer familiar with the codebase.
+```
+sparrow/
+  proto/        NEW  protobuf schema, buf config, shared fixtures
+  protocol/     NEW  Gradle JVM module: generated Kotlin lite + gRPC stubs, ProfileMapper, tests
+  core/         unchanged
+  app/          + remote/, Backend screen, standby
+  backend/      NEW  Go module: sparrowd, sparrow-hook, web/
+  deploy/       NEW  docker-compose, mediamtx.yml, systemd units
+  docs/
+```
 
-### Phase 0: spikes and decisions (3–5 days)
+One repository keeps the schema, phone and server changes in one pull request, and `buf breaking`
+runs against `main` on every change. *(decide: or a separate backend repository that pulls `proto/`
+as a buf module.)*
 
-* MediaMTX KLV passthrough test (SRT→SRT, sync + async) with a pinned version; recording check.
-* OkHttp WebSocket + Robolectric smoke test to confirm the test setup works offline.
-* Decide: server auth model (static tokens first?), telemetry default level, single-tenant.
-* Output: this document updated with results; `deploy/` skeleton with MediaMTX + Caddy.
-
-### Phase 1: enrollment, telemetry, remote config (about 3 weeks)
-
-App
-
-* `core.remote` DTOs with round-trip tests.
-* `BackendConfig`, `BackendClient`, `ControlChannel`, `BackendSession`, `TelemetryCollector`,
-  `TelemetrySpool`, `RemoteConfigSync`, `BackendSyncWorker`.
-* Backend screen (enroll / status / telemetry level / unenroll), cloud chip, managed-profile badge.
-* `Profile.managed`, `ProfileRepository.applyManaged`.
-
-Server
-
-* `:server` module: Ktor, Postgres, Flyway, device endpoints, WS, operator JSON endpoints,
-  Dockerfile, `docker-compose.yml` (server + postgres + caddy), Prometheus metrics.
-
-Acceptance
-
-* Fresh install streams to a third-party receiver with no backend: no network traffic other than
-  SRT (checked with a packet capture).
-* Enroll via pasted URL; device appears online in `GET /v1/devices`; going live produces link,
-  health and session rows; a `PUT …/config` with a new profile shows up on the phone within 5 s
-  while connected and within 15 min while idle.
-* Kill the network mid-stream: telemetry resumes with no gap after reconnect (spool).
-
-### Phase 2: commands and console (about 2 weeks)
-
-* `CommandDispatcher`, pipeline hooks (`setBitrate`, keyframe, restart), start-by-notification.
-* Operator commands endpoint with wait; console v1 (device list, detail with live link chart, map
-  at `FULL`, zoom/bitrate/keyframe/stop/profile controls, config editor built from the same
-  validation as the app, log viewer). TypeScript + Vite, served from the server jar.
-* Acceptance: zoom from the console changes the stream and the phone's zoom readout within 500 ms
-  on Wi-Fi; a command to an offline device fails immediately with `DEVICE_OFFLINE`; every applied
-  command is visible in the phone's log.
-
-### Phase 3: hosted gateway (about 2–3 weeks)
-
-* MediaMTX in Compose with HTTP auth, hooks, Control API reconciliation.
-* `POST …/gateway` provisioning, managed "Hosted gateway" profile, playback URLs, console preview
-  (WHEP, HLS fallback), read credentials for 4609 consumers, optional archiver.
-* Acceptance: one click enrolls a device onto the gateway; `ffprobe` on the SRT read URL shows
-  video + `klv` data and `St0601Decoder` reproduces the device's KLV byte-exact; the console shows
-  the preview within 3 s of the phone going live; revoking the device kills the publish.
-
-### Phase 4: hardening (ongoing)
-
-* OIDC for operators and roles; device groups with config templates and per-device overrides.
-* Keystore key-pair device auth; per-device SRT passphrases via Control API path config.
-* Alerts (stream dropped, GNSS lost, battery low) via webhook/e-mail; retention tuning;
-  dashboards from `/metrics`.
-* Live QR scanning in the app (also closes the existing SRT-4 gap).
+CI jobs: `buf lint` and `buf breaking`; `./gradlew :core:test :protocol:test :app:testDebugUnitTest`;
+`go vet`, `go test ./...`, `golangci-lint`; web `npm run build` and type-check; an opt-in
+integration job that starts MediaMTX and runs the KLV round trip.
 
 ---
 
-## 10. Testing strategy
+## 9. Phases
+
+Estimates assume one developer who knows both stacks.
+
+| Phase | Content | Effort |
+| --- | --- | --- |
+| 0. Spikes | KLV through MediaMTX; standby camera access and network in Doze on two or three devices; gRPC bidi over cellular with keepalive; buf and Gradle generation working offline | 1 week |
+| 1. Register and observe | `proto/`, `:protocol` module, sparrowd skeleton with SQLite and TLS bootstrap, both registration flows, `Connect` stream, status and telemetry with spool, web UI: login, devices, device detail with charts | 3 weeks |
+| 2. Control | Desired/applied config, config editor, all commands, standby mode, command history, log upload | 2–3 weeks |
+| 3. Media | MediaMTX in compose, auth and hooks, gateway profile, viewer, streams page, consumer credentials for RTSP and SRT | 2–3 weeks |
+| 4. Later | Push outputs and UDP multicast, recording, ONVIF, alerts, OIDC, mTLS, groups and templates, WebSocket fallback | per feature |
+
+Acceptance for each phase
+
+* **1:** A phone without a backend streams with no traffic other than SRT (checked with a packet
+  capture). A registered phone shows up live in the web UI within 2 s of opening the app. Pulling
+  the network mid-stream leaves no gap in telemetry after reconnect.
+* **2:** A config saved while the phone is offline applies when it reconnects, and the web UI shows
+  "in sync". Zoom from the web changes the stream and the phone's readout within 500 ms on Wi-Fi.
+  Start from the web works with the phone in standby and the screen off.
+* **3:** An NVR records a phone through the RTSP URL. Replacing the phone and reusing its alias keeps
+  the NVR recording without changes. The SRT read URL returns KLV that matches the phone byte for
+  byte. The browser shows video within 3 s of the phone going live.
+
+---
+
+## 10. Testing
 
 | Layer | Tests |
 | --- | --- |
-| `core.remote` | JSON round-trips, unknown-field tolerance, `Command` polymorphism, `ConfigSnapshot` merge rules (pure functions) |
-| App | Robolectric: `CommandDispatcher` mapping table, `TelemetrySpool` cap/drain/corruption, `RemoteConfigSync` merge against `ProfileRepository`, Backend screen screenshot added to `ScreenshotTest` |
-| Server | Ktor test host for every endpoint; Testcontainers Postgres for migrations and queries (skipped without Docker); WS integration test with a fake device; MediaMTX auth-hook contract test from a recorded request body |
-| Gateway | Opt-in integration test (env `MTX_HOME` or Docker): publish a TS from `TsMuxer`, read back over SRT, assert KLV byte-exact; mirrors `FfmpegInteropTest` |
-| End to end | `deploy/` Compose stack + a device or emulator; checklist in `docs/operator-guide.md` |
+| Schema | `buf lint`, `buf breaking` against `main` |
+| `:protocol` | Mapper round trip, field-coverage check, shared validation fixtures |
+| App | Robolectric: dispatcher table, spool cap and corruption, `applyManaged` rules, Backend screen screenshots in `ScreenshotTest` |
+| sparrowd | Handler tests with in-memory SQLite; hub tests with a fake phone over a real bidi stream; MediaMTX auth contract test from recorded request bodies; fixtures through protovalidate |
+| Integration | Compose stack with MediaMTX, a simulated phone in Go that publishes a recorded TS and speaks `DeviceService`, KLV round trip |
+
+The simulated phone (`backend/cmd/fakephone`) is also useful for load tests and for developing the
+web UI without a device.
 
 ---
 
 ## 11. Open questions *(decide before phase 1)*
 
-1. **Hosting model.** Self-hosted single tenant (assumed) or one shared service for several
-   organisations? Multi-tenant changes auth, data model and the console early.
-2. **Position telemetry default.** Off until the operator sets `FULL`, or on by default once
-   enrolled? The plan assumes off by default.
-3. **4609 consumers through the gateway.** Must KLV survive the gateway for external consumers,
-   or is the gateway only for operator preview? This decides how hard the phase 0 spike gate is.
-4. **Operator authentication.** Static tokens acceptable for v1?
-5. **Fleet size and retention.** Tens or thousands of devices; how many days of samples.
-6. **Server language.** Kotlin/Ktor sharing `core` (recommended) versus Go next to MediaMTX.
+1. **Monorepo or separate backend repo?** The plan assumes one repo.
+2. **Standby by default?** Should managed phones arm remote standby automatically after the user
+   opens the app, or only on an explicit tap?
+3. **Must KLV reach consumers byte-exact?** This decides whether a failed MediaMTX spike blocks
+   phase 3 or only moves the 4609 path to the Go forwarder.
+4. **Which NVR/VMS products must work first?** Some want ONVIF discovery rather than a raw RTSP URL,
+   which would pull ONVIF forward from phase 4.
+5. **Position telemetry default.** The plan assumes off until an admin sets `FULL`.
+6. **Fleet size per site.** Tens of phones fits SQLite; hundreds suggests PostgreSQL from the start.
 
 ---
 
-## 12. Sources checked for the gateway section
+## 12. Sources
 
-* MediaMTX issue 5612 (SRT publish with KLV, SRT read keeps KLV, RTSP read uses RFC 6597):
-  https://github.com/bluenviron/mediamtx/issues/5612
+* MediaMTX issue 5612, KLV on SRT read versus RTSP: https://github.com/bluenviron/mediamtx/issues/5612
 * MediaMTX KLV handling PR 3688: https://github.com/bluenviron/mediamtx/pull/3688
-* MediaMTX configuration reference (`authMethod: http`, hooks, Control API, SRT, HLS defaults):
-  https://github.com/bluenviron/mediamtx/blob/main/mediamtx.yml
-* MediaMTX MPEG-TS source docs listing KLV among supported "other" tracks:
-  https://mediamtx.org/docs/static-sources/mpeg-ts
+* MediaMTX configuration reference: https://github.com/bluenviron/mediamtx/blob/main/mediamtx.yml
+* Connect for Go, streaming and HTTP/2 requirement: https://connectrpc.com/docs/go/streaming
+* gRPC Kotlin for Android: https://developers.googleblog.com/en/announcing-grpc-kotlin-10-for-android-and-cloud/
+* Android gRPC guide: https://developer.android.com/guide/topics/connectivity/grpc
+* Wire bidi streaming issue on Android (Kotlin Slack): https://slack-chats.kotlinlang.org/t/497297/seeking-advice-on-wire-grpc-client-on-android-client-which-u
+* gosrt, pure Go SRT: https://github.com/datarhei/gosrt
+* Android 11 foreground service camera restriction: https://developer.android.com/about/versions/11/privacy/foreground-services

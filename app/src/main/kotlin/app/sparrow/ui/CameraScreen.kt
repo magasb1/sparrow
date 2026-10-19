@@ -586,6 +586,12 @@ private fun StatsPanel(status: StreamStatus, profile: Profile) {
             },
             if (status.running && !status.gnss.hasFix) WarnAmber else Color.White,
         )
+        if (status.running) StatLine(
+            "Compass",
+            if (status.gnss.compassLow) "Low accuracy · calibrate (figure 8)" else "OK" +
+                profile.metadata.headingOffsetDeg.takeIf { it != 0.0 }?.let { " · %+.1f° correction".format(it) }.orEmpty(),
+            if (status.gnss.compassLow) WarnAmber else Color.White,
+        )
         StatLine("Metadata", "ST 0601.${profile.metadata.lsVersion} · ${"%.0f".format(profile.metadata.rateHz)} Hz · ${if (profile.metadata.carriage.name == "SYNC") "sync" else "async"}")
         status.recordingPath?.let { StatLine("Recording", it.substringAfterLast('/')) }
     }

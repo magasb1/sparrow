@@ -148,6 +148,7 @@ fun SettingsScreen(profiles: ProfileRepository, onBack: () -> Unit) {
                 TextRow("Image source sensor (tag 11)", p.metadata.imageSourceSensor, { p = p.copy(metadata = p.metadata.copy(imageSourceSensor = it)) })
                 TextRow("Call sign (tag 59)", p.metadata.callSign, { p = p.copy(metadata = p.metadata.copy(callSign = it)) })
                 NumberRow("Ground elevation (MSL)", p.metadata.groundElevationM, { v -> v.toDoubleOrNull()?.let { p = p.copy(metadata = p.metadata.copy(groundElevationM = it)) } }, decimal = true, unit = "m")
+                NumberRow("Heading correction", p.metadata.headingOffsetDeg, { v -> v.toDoubleOrNull()?.let { p = p.copy(metadata = p.metadata.copy(headingOffsetDeg = it)) } }, decimal = true, unit = "°")
                 NumberRow("LS version (tag 65)", p.metadata.lsVersion, { v -> v.toIntOrNull()?.let { p = p.copy(metadata = p.metadata.copy(lsVersion = it)) } })
                 ChoiceRow("KLV carriage", KlvCarriage.entries, p.metadata.carriage, { p = p.copy(metadata = p.metadata.copy(carriage = it)) }) {
                     if (it == KlvCarriage.SYNC) "Synchronous (0x15)" else "Asynchronous (0x06)"

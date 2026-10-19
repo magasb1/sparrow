@@ -31,7 +31,7 @@ import kotlin.math.sin
  * Only the GPS provider is used: a network location is not a GNSS fix (KLV-6). MSL altitude comes
  * from Location (API 34+) or from NMEA GGA sentences on older releases.
  */
-class SensorHub(private val context: Context) {
+class SensorHub(private val context: Context, private val headingOffsetDeg: Double = 0.0) {
     private val thread = HandlerThread("sensors")
     private val handler by lazy { Handler(thread.looper) }
     private val sensorManager = context.getSystemService(SensorManager::class.java)
@@ -41,6 +41,7 @@ class SensorHub(private val context: Context) {
         private set
     @Volatile private var latestAccuracy: Float? = null
     @Volatile private var declinationDeg = 0.0
+    @Volatile private var compassLow = false
     @Volatile private var ggaMsl: Pair<Long, Double>? = null // (captureUs, metres)
 
     /** UTC µs minus capture-clock µs. */
@@ -63,7 +64,11 @@ class SensorHub(private val context: Context) {
             }
         }
 
-        override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
+        override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {
+            // Below MEDIUM the magnetometer is uncalibrated or disturbed: heading can be off by tens of degrees.
+            compassLow = accuracy < SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM
+            if (compassLow) AppLog.w("Compass accuracy low ($accuracy): move the phone in a figure 8, away from steel")
+        }
     }
 
     private val locationListener = LocationListener { onLocation(it) }
@@ -138,6 +143,7 @@ class SensorHub(private val context: Context) {
             accuracyM = latestAccuracy,
             ageMs = age,
             usingGnssTime = usingGnssTime,
+            compassLow = compassLow,
         )
     }
 
@@ -158,7 +164,8 @@ class SensorHub(private val context: Context) {
         // A far-off sample is a different pose; omitting attitude beats sending a wrong one.
         if (kotlin.math.abs(nearest.first - captureUs) > 25_000) return null
         val pose = CameraPose.fromDevice(Mat3.of(nearest.second), facing, sensorOrientation)
-        return CameraPose(rotateAzimuth(pose.forward, declinationDeg), rotateAzimuth(pose.up, declinationDeg))
+        val toTrue = declinationDeg + headingOffsetDeg
+        return CameraPose(rotateAzimuth(pose.forward, toTrue), rotateAzimuth(pose.up, toTrue))
     }
 
     /** Rotates an ENU vector clockwise (seen from above) by [deg]: magnetic → true north. */

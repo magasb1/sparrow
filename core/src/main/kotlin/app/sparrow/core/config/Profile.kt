@@ -64,6 +64,8 @@ data class MetadataSettings(
     val imageSourceSensor: String = "EO",
     val callSign: String = "",
     val groundElevationM: Double = 0.0,
+    /** Added to the compass heading, degrees clockwise; for a fixed mount near steel or a poorly calibrated compass. */
+    val headingOffsetDeg: Double = 0.0,
     val lsVersion: Int = St0601.DEFAULT_VERSION,
     val carriage: KlvCarriage = KlvCarriage.SYNC,
 )

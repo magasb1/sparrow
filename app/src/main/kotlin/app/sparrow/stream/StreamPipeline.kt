@@ -36,7 +36,7 @@ class StreamPipeline(
     private val displayRotationDeg: Int,
     private val onFatalError: (String) -> Unit,
 ) {
-    private val sensors = SensorHub(context)
+    private val sensors = SensorHub(context, profile.metadata.headingOffsetDeg)
     private val cameraInfo: CameraInfo = CameraInfo.all(context).let { all ->
         all.firstOrNull { it.id == profile.video.cameraId }
             ?: all.firstOrNull { it.facing == app.sparrow.core.geo.LensFacing.BACK }

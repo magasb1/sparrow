@@ -21,6 +21,8 @@ data class GnssStatus(
     val accuracyM: Float? = null,
     val ageMs: Long? = null,
     val usingGnssTime: Boolean = false,
+    /** Rotation-vector sensor below medium accuracy: heading unreliable. */
+    val compassLow: Boolean = false,
 )
 
 /** Latest GNSS position and camera direction, for the backend's map. */

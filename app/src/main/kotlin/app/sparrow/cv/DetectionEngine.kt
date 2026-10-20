@@ -47,7 +47,8 @@ class DetectionEngine(
     private val inference = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "detector") }
     @Volatile private var busy = false
     private val reader = ImageReader.newInstance(analysisSize.width, analysisSize.height, ImageFormat.YUV_420_888, 2)
-    val tracker = Tracker()
+    // The confidence setting is the BYTE high threshold; weaker detections still extend tracks.
+    val tracker = Tracker(highScore = settings.minConfidence.toFloat())
 
     private var env: OrtEnvironment? = null
     private var session: OrtSession? = null
@@ -61,6 +62,9 @@ class DetectionEngine(
     private var lastRunMs = 0L
     private var lastStatsMs = 0L
     private var runs = 0
+    private var statsLogged = 0
+    private var preMs = 0L
+    private var runMs = 0L
 
     @Volatile var enabled = false
         set(value) {
@@ -107,12 +111,15 @@ class DetectionEngine(
             tensorBuffer.clear()
             tensorBuffer.put(input)
             tensorBuffer.flip()
+            preMs = SystemClock.elapsedRealtime() - t0
             val n = RfDetr.INPUT_SIZE.toLong()
             OnnxTensor.createTensor(env, tensorBuffer, longArrayOf(1, 3, n, n)).use { tensor ->
+                val t1 = SystemClock.elapsedRealtime()
                 s.run(mapOf(RfDetr.INPUT_NAME to tensor)).use { out ->
+                    runMs = SystemClock.elapsedRealtime() - t1
                     val boxes = (out.get(RfDetr.BOXES_OUTPUT).get() as OnnxTensor).floatBuffer.toArray()
                     val logits = (out.get(RfDetr.LOGITS_OUTPUT).get() as OnnxTensor).floatBuffer.toArray()
-                    val detections = RfDetr.postprocess(boxes, logits, settings.minConfidence.toFloat(), settings.classes)
+                    val detections = RfDetr.postprocess(boxes, logits, LOW_SCORE, settings.classes)
                     if (enabled) tracker.update(detections, captureUs)
                 }
             }
@@ -128,6 +135,7 @@ class DetectionEngine(
             lastStatsMs = now
             runs = 0
             onResults(DetectionStats(ms, rate, tracker.lastDetectionCount))
+            if (++statsLogged % 10 == 0) AppLog.i("Detection: %.1f Hz, %d ms (pre %d, run %d), %d targets".format(rate, ms, preMs, runMs, tracker.lastDetectionCount))
         }
     }
 
@@ -137,17 +145,14 @@ class DetectionEngine(
         return try {
             val e = OrtEnvironment.getEnvironment()
             val model = context.assets.open(RfDetr.ASSET).use { it.readBytes() }
-            val s = runCatching {
-                // XNNPACK runs the quantised matmuls on all big cores.
-                e.createSession(model, OrtSession.SessionOptions().apply {
-                    addXnnpack(mapOf("intra_op_num_threads" to "4"))
-                    setIntraOpNumThreads(1)
-                    setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-                })
-            }.getOrElse {
-                AppLog.w("XNNPACK unavailable; using the default CPU provider", it)
-                e.createSession(model, OrtSession.SessionOptions().apply { setIntraOpNumThreads(4) })
-            }
+            // CPU provider only, on the four big cores. Measured on a Galaxy A55 (Exynos 1480):
+            // XNNPACK makes every pairing slower (it takes 9 convolutions and the partition copies
+            // cost more), the fp32 model is slower than this dynamic-INT8 one, and spinning
+            // workers beat sleeping ones for the 1 800 small ops of the transformer.
+            val s = e.createSession(model, OrtSession.SessionOptions().apply {
+                setIntraOpNumThreads(4)
+                setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            })
             env = e
             session = s
             AppLog.i("RF-DETR Nano loaded in ${SystemClock.elapsedRealtime() - t0} ms")
@@ -196,6 +201,9 @@ class DetectionEngine(
     private fun FloatBuffer.toArray(): FloatArray = FloatArray(remaining()).also { get(it) }
 
     companion object {
+        /** Detections below this are not even offered to the tracker's second association. */
+        private const val LOW_SCORE = 0.1f
+
         /** Smallest YUV size with the stream's aspect ratio and at least 640 px wide. */
         fun analysisSize(sizes: List<Size>, aspect: Double): Size? = sizes
             .filter { kotlin.math.abs(it.width.toDouble() / it.height - aspect) < 0.02 && it.width >= 640 }

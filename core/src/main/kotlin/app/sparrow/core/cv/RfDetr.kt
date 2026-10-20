@@ -83,22 +83,37 @@ object RfDetr {
      * Fills [out] (3×384×384, CHW) from a YUV frame in sensor orientation, rotated into stream
      * orientation and stretched to the square input. Luma is sampled bilinearly, chroma nearest.
      */
-    fun preprocess(frame: YuvFrame, rotationDeg: Int, out: FloatArray) {
-        val n = INPUT_SIZE
+    fun preprocess(frame: YuvFrame, rotationDeg: Int, out: FloatArray, n: Int = INPUT_SIZE) {
         val plane = n * n
+        val w = frame.width
+        val h = frame.height
+        // Sample positions per output index, computed once instead of per pixel (147k of them):
+        // sensorX/Y read only s or only t for a given rotation, so one value serves both. With a
+        // 90/270° rotation the output row drives the sensor x and the column the sensor y.
+        val x0s = IntArray(n); val x1s = IntArray(n); val axs = FloatArray(n)
+        val y0s = IntArray(n); val y1s = IntArray(n); val ays = FloatArray(n)
+        for (k in 0 until n) {
+            val s = (k + 0.5f) / n
+            val fx = sensorX(s, s, rotationDeg) * w - 0.5f
+            val fy = sensorY(s, s, rotationDeg) * h - 0.5f
+            x0s[k] = fx.toInt().coerceIn(0, w - 1); x1s[k] = min(x0s[k] + 1, w - 1); axs[k] = (fx - x0s[k]).coerceIn(0f, 1f)
+            y0s[k] = fy.toInt().coerceIn(0, h - 1); y1s[k] = min(y0s[k] + 1, h - 1); ays[k] = (fy - y0s[k]).coerceIn(0f, 1f)
+        }
+        val swap = rotationDeg % 180 != 0
+        val y = frame.y
+        val ys = frame.yRowStride
         for (row in 0 until n) {
-            val t = (row + 0.5f) / n
             for (col in 0 until n) {
-                val s = (col + 0.5f) / n
-                // Inlined sensorPoint: this loop runs 147k times per inference.
-                val sx = sensorX(s, t, rotationDeg)
-                val sy = sensorY(s, t, rotationDeg)
-                val fx = sx * frame.width - 0.5f
-                val fy = sy * frame.height - 0.5f
-                val luma = bilinear(frame, fx, fy)
-                val cx = (fx.toInt().coerceIn(0, frame.width - 1)) / 2
-                val cy = (fy.toInt().coerceIn(0, frame.height - 1)) / 2
-                val ci = cy * frame.uvRowStride + cx * frame.uvPixelStride
+                val kx = if (swap) row else col
+                val ky = if (swap) col else row
+                val x0 = x0s[kx]; val x1 = x1s[kx]; val ax = axs[kx]
+                val y0 = y0s[ky]; val y1 = y1s[ky]; val ay = ays[ky]
+                val r0 = y0 * ys
+                val r1 = y1 * ys
+                val top = (y[r0 + x0].toInt() and 0xFF) * (1 - ax) + (y[r0 + x1].toInt() and 0xFF) * ax
+                val bottom = (y[r1 + x0].toInt() and 0xFF) * (1 - ax) + (y[r1 + x1].toInt() and 0xFF) * ax
+                val luma = top * (1 - ay) + bottom * ay
+                val ci = (y0 shr 1) * frame.uvRowStride + (x0 shr 1) * frame.uvPixelStride
                 val cb = (frame.u[ci].toInt() and 0xFF) - 128f
                 val cr = (frame.v[ci].toInt() and 0xFF) - 128f
                 // BT.601 full range, as camera YUV_420_888 output is JFIF.
@@ -133,17 +148,6 @@ object RfDetr {
                 }
             }
         }
-    }
-
-    private fun bilinear(f: YuvFrame, x: Float, y: Float): Float {
-        val x0 = x.toInt().coerceIn(0, f.width - 1)
-        val y0 = y.toInt().coerceIn(0, f.height - 1)
-        val x1 = min(x0 + 1, f.width - 1)
-        val y1 = min(y0 + 1, f.height - 1)
-        val ax = (x - x0).coerceIn(0f, 1f)
-        val ay = (y - y0).coerceIn(0f, 1f)
-        fun p(px: Int, py: Int) = (f.y[py * f.yRowStride + px].toInt() and 0xFF).toFloat()
-        return (p(x0, y0) * (1 - ax) + p(x1, y0) * ax) * (1 - ay) + (p(x0, y1) * (1 - ax) + p(x1, y1) * ax) * ay
     }
 
     private fun bilinearArgb(px: IntArray, w: Int, h: Int, x: Float, y: Float, shift: Int): Float {

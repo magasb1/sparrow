@@ -250,7 +250,8 @@ class StreamPipeline(
         val captureUs = camera.toCaptureUs(cameraUs)
         val now = SensorHub.nowUs()
         muxer.writeVideo(captureUs, accessUnit, keyFrame, now)
-        detector?.takeIf { it.enabled }?.let { StreamController.publishTracks(it.snapshot(captureUs)) }
+        // The overlay sits on the live preview, not on this (already encoded, older) frame: predict to now.
+        detector?.takeIf { it.enabled }?.let { StreamController.publishTracks(it.snapshot(now)) }
         // KLV samples are aligned to video frames so their PTS equals the frame's (NFR-2).
         // Samples land on the frame nearest each scheduled time, so the average rate is exact even
         // when it does not divide the frame rate (10 Hz at 15 fps).

@@ -254,6 +254,8 @@ class CameraSource(
         }
     }
 
+    private var configureGeneration = 0
+
     private fun configure() {
         val camera = device ?: return
         session?.close()
@@ -273,9 +275,12 @@ class CameraSource(
         }
         if (analysis != null) lastConfigureWithAnalysisMs = SystemClock.elapsedRealtime()
         val outputs = outputsFor(targets)
+        val generation = ++configureGeneration
         val callback = object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(s: CameraCaptureSession) {
-                if (closed) {
+                // A newer configure() has superseded this session (e.g. the analysis stream was
+                // added while the preview session was still being built): it is already closed.
+                if (closed || generation != configureGeneration) {
                     s.close(); return
                 }
                 session = s

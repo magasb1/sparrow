@@ -102,6 +102,27 @@ class TrackerTest {
         t.update(emptyList(), 2_000_000)
         assertTrue(t.snapshot(2_000_000).isEmpty())
     }
+
+    @Test
+    fun `low-scoring detections extend a track but never start one`() {
+        val t = Tracker(highScore = 0.5f)
+        t.update(listOf(det(0.10f, score = 0.3f)), 0)
+        t.update(listOf(det(0.10f, score = 0.3f)), 250_000)
+        assertTrue(t.snapshot(250_000).isEmpty())
+        t.update(listOf(det(0.10f)), 500_000)
+        t.update(listOf(det(0.12f)), 750_000)
+        val confirmed = t.snapshot(750_000).single()
+        // Partly occluded: only a weak detection, still the same track and a fresh update.
+        t.update(listOf(det(0.14f, score = 0.3f)), 1_000_000)
+        val kept = t.snapshot(1_000_000).single()
+        assertEquals(confirmed.id, kept.id)
+        assertEquals(confirmed.hits + 1, kept.hits)
+        assertEquals(0.19f, kept.box.cx, 0.01f)
+        // A weak detection does not revive a track that was already unmatched last time.
+        t.update(emptyList(), 1_250_000)
+        t.update(listOf(det(0.18f, score = 0.3f)), 1_500_000)
+        assertEquals(kept.hits, t.snapshot(1_500_000).single().hits)
+    }
 }
 
 class RfDetrMathTest {

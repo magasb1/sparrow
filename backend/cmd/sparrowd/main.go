@@ -5,11 +5,13 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -22,6 +24,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "healthz" {
+		if err := healthz(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(log); err != nil {
 		log.Error("sparrowd stopped", "err", err)
@@ -111,6 +120,40 @@ func run(log *slog.Logger) error {
 	}
 	log.Info("sparrowd stopped")
 	return nil
+}
+
+// healthz is the container health check (`sparrowd healthz`): the image has no shell or curl.
+// It fetches /healthz from the server in this container, on the same port and scheme it serves.
+func healthz() error {
+	_, port, err := net.SplitHostPort(envOr("SPARROW_LISTEN", ":8443"))
+	if err != nil {
+		return err
+	}
+	scheme := "https"
+	if insecure, _ := strconv.ParseBool(os.Getenv("SPARROW_INSECURE_HTTP")); insecure {
+		scheme = "http"
+	}
+	client := &http.Client{
+		Timeout: 4 * time.Second,
+		// Loopback to our own self-signed certificate; nothing to verify.
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec
+	}
+	resp, err := client.Get(scheme + "://127.0.0.1:" + port + "/healthz")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthz: %s", resp.Status)
+	}
+	return nil
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 // pruneReports deletes old reports at start and then once a day.

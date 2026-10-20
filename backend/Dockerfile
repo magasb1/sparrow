@@ -13,4 +13,6 @@ COPY --from=build --chown=65532:65532 /out/data /var/lib/sparrow
 ENV SPARROW_DATA_DIR=/var/lib/sparrow
 VOLUME /var/lib/sparrow
 EXPOSE 8443
+# Distroless has no shell or curl: the binary probes its own /healthz.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["/usr/local/bin/sparrowd", "healthz"]
 ENTRYPOINT ["/usr/local/bin/sparrowd"]

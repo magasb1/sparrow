@@ -18,6 +18,12 @@ docker compose up -d
 Then open `https://<server>:8443`, log in, and use **Add phone**. On the phone, open
 **Menu → Backend** and scan or paste the link.
 
+On [Coolify](https://coolify.io), add a *Docker Compose* resource for this repository with the
+compose location `/deploy/docker-compose.coolify.yml`. Coolify generates the database and admin
+passwords (Environment Variables tab); set `SPARROW_PUBLIC_URL` (`https://<host>:8443`) and
+`SPARROW_TLS_HOSTS` (the host name and IP) there before the first deploy. sparrowd is published on
+host port 8443 and bypasses Coolify's proxy on purpose: phones pin its own certificate.
+
 Without Docker, `sparrowd` needs PostgreSQL and these variables:
 
 | Variable | Meaning |

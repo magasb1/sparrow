@@ -1,0 +1,58 @@
+# Sparrow backend for Coolify (Docker Compose resource).
+#
+# In Coolify: New resource → Docker Compose → this repository, branch, and
+# "Docker Compose location" = /deploy/docker-compose.coolify.yml.
+#
+# Coolify fills the SERVICE_* variables itself (generated passwords, visible and editable under
+# Environment Variables). Set SPARROW_PUBLIC_URL and SPARROW_TLS_HOSTS there before the first deploy.
+# Health checks come from the images (postgres below, sparrowd's Dockerfile); the dashboard
+# health-check page does not apply to compose resources.
+#
+# sparrowd terminates TLS itself with a self-signed certificate whose key the phones pin, so it is
+# published straight on host port 8443 and does not go through Coolify's proxy (whose certificate
+# would rotate and break the pin). The SRT ports of later milestones are UDP and need the same.
+
+services:
+  postgres:
+    image: postgres:17.6
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sparrow
+      POSTGRES_USER: sparrow
+      POSTGRES_PASSWORD: ${SERVICE_PASSWORD_POSTGRES}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sparrow -d sparrow"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  sparrowd:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPARROW_DATABASE_URL: postgres://sparrow:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/sparrow
+      SPARROW_ADMIN_USER: ${SPARROW_ADMIN_USER:-admin}
+      SPARROW_ADMIN_PASSWORD: ${SERVICE_PASSWORD_ADMIN}
+      # The address phones use, e.g. https://sparrow.example.com:8443 (host port below). Required:
+      # Coolify blocks the deploy until it is set.
+      SPARROW_PUBLIC_URL: ${SPARROW_PUBLIC_URL:?}
+      # Names and IPs to put in the self-signed certificate, comma separated: the public host name
+      # and the server's IP. Used on first start only; the certificate lives in the volume.
+      SPARROW_TLS_HOSTS: ${SPARROW_TLS_HOSTS:-}
+      SPARROW_REPORT_RETENTION_DAYS: ${SPARROW_REPORT_RETENTION_DAYS:-30}
+    ports:
+      - "8443:8443"
+    volumes:
+      # Holds the self-signed certificate. Phones pin its key: keep this volume.
+      - sparrow:/var/lib/sparrow
+
+volumes:
+  postgres:
+  sparrow:

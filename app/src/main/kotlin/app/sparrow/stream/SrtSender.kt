@@ -32,6 +32,8 @@ class SrtSender(
     private val wake = Object()
     @Volatile private var running = false
     @Volatile private var connected = false
+    /** Skip the backoff wait once: the drop was ours (network change), not the link's. */
+    @Volatile private var retryNow = false
     @Volatile private var socket: SrtSocket? = null
     @Volatile private var serverSocket: SrtSocket? = null
     private var thread: Thread? = null
@@ -57,10 +59,14 @@ class SrtSender(
         }
     }
 
-    /** Network changed (BG-4): drop the current connection and retry immediately. */
+    /**
+     * Network changed (BG-4): drop the current connection, or a connect still blocked on the old
+     * network, and retry at once on the new one.
+     */
     fun onNetworkChanged() {
         backoff.reset()
-        if (connected) {
+        retryNow = true
+        if (socket != null || serverSocket != null) {
             AppLog.i("Network changed; reconnecting SRT")
             closeSockets()
         }
@@ -87,11 +93,16 @@ class SrtSender(
                 if (!running) break
                 connected = false
                 closeSockets()
-                val delay = backoff.nextDelayMs()
                 val reason = e.message ?: e.javaClass.simpleName
+                if (retryNow) {
+                    retryNow = false
+                    continue
+                }
+                val delay = backoff.nextDelayMs()
                 AppLog.w("SRT link down ($reason); retry in $delay ms")
-                if (running) listener.onState(LinkState.Reconnecting(delay, reason))
-                synchronized(wake) { if (running) wake.wait(delay) }
+                // Nothing below may throw: an escape here would end the thread and the retries.
+                runCatching { if (running) listener.onState(LinkState.Reconnecting(delay, reason)) }
+                runCatching { synchronized(wake) { if (running) wake.wait(delay) } }
             }
         }
         connected = false

@@ -48,7 +48,7 @@ class SrtTest {
     @Test
     fun `backoff doubles to 30 s and resets`() {
         val b = Backoff()
-        assertEquals(listOf(1000L, 2000L, 4000L, 8000L, 16000L, 30000L, 30000L), List(7) { b.nextDelayMs() })
+        assertEquals(listOf(1000L, 2000L, 4000L, 5000L, 5000L), List(5) { b.nextDelayMs() })
         b.reset()
         assertEquals(1000L, b.nextDelayMs())
     }

@@ -47,6 +47,8 @@ data class CameraInfo(
     val yuvSizes: List<Size>,
     val fpsRanges: List<Range<Int>>,
     val label: String,
+    /** The HAL offers its best (slower) noise reduction for repeating requests. */
+    val hqNoiseReduction: Boolean = false,
 ) {
     /** Horizontal and vertical FOV in degrees of an output with aspect [aspect] at [zoom]. */
     fun fieldOfView(aspect: Double, zoom: Double): Pair<Double, Double> {
@@ -96,6 +98,8 @@ data class CameraInfo(
                 fpsRanges = c.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList().orEmpty(),
                 label = "${facing.name.lowercase().replaceFirstChar { it.uppercase() }} camera $id " +
                     "(%.1f mm, %.0f° HFOV)".format(focal, FrameGeometry.fieldOfView(activeWmm, focal.toDouble())),
+                hqNoiseReduction = c.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES)
+                    ?.contains(CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY) == true,
             )
         }
 
@@ -319,6 +323,11 @@ class CameraSource(
         return camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
             targets.forEach { addTarget(it) }
             set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange())
+            // Sensor noise is what a CBR encoder spends most bits on and the viewer least wants.
+            // HIGH_QUALITY may cost frame rate, which is plentiful at the 30 fps and below we stream.
+            if (info.hqNoiseReduction && settings.fps <= 30) {
+                set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY)
+            }
             when (settings.focus) {
                 FocusMode.CONTINUOUS -> set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
                 FocusMode.INFINITY -> {

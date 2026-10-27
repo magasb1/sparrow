@@ -1,6 +1,6 @@
 package app.sparrow.core.cv
 
-/** COCO category ids (1–90, with gaps) as used by the RF-DETR COCO checkpoints. */
+/** COCO category ids (1–90, with gaps); YOLO26 class indices map onto them in order. */
 object CocoClasses {
     val names: Map<Int, String> = mapOf(
         1 to "person",

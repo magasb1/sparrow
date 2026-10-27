@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import android.content.Intent
 import app.sparrow.SparrowApp
+import app.sparrow.core.config.OrientationLock
 import app.sparrow.remote.BackendSession
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.sparrow.stream.StreamController
@@ -56,12 +57,18 @@ class MainActivity : ComponentActivity() {
                 var screen by rememberSaveable {
                     mutableStateOf(if (app.onboardingDone) Screen.Main else Screen.Onboarding)
                 }
-                // Free rotation while idle; locked to the stream's orientation while live, because a
-                // stream cannot change resolution mid-flight.
+                // The profile's orientation while idle; locked to the stream's orientation while live,
+                // because a stream cannot change resolution mid-flight.
                 val status by StreamController.status.collectAsStateWithLifecycle()
-                LaunchedEffect(status.running, status.displayRotationDeg) {
-                    requestedOrientation = status.displayRotationDeg?.takeIf { status.running }?.let(::lockFor)
-                        ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                val profileList by app.profiles.profiles.collectAsStateWithLifecycle()
+                val activeId by app.profiles.activeId.collectAsStateWithLifecycle()
+                val lock = profileList.firstOrNull { it.id == activeId }?.video?.orientation ?: OrientationLock.AUTO
+                LaunchedEffect(status.running, status.displayRotationDeg, lock) {
+                    requestedOrientation = status.displayRotationDeg?.takeIf { status.running }?.let(::lockFor) ?: when (lock) {
+                        OrientationLock.AUTO -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                        OrientationLock.PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                        OrientationLock.LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    }
                 }
                 // The link the Backend screen was opened with; cleared when it is left by any route.
                 var backendLink by rememberSaveable { mutableStateOf<String?>(null) }

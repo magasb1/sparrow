@@ -21,6 +21,7 @@ import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import app.sparrow.R
 import app.sparrow.SparrowApp
+import app.sparrow.core.config.OrientationLock
 import app.sparrow.core.config.Profile
 import app.sparrow.log.AppLog
 import app.sparrow.remote.BackendSession
@@ -79,10 +80,11 @@ class StreamingService : LifecycleService() {
     private fun startStreaming() {
         if (pipeline != null) return
         stopping = false
-        // Fixed for the whole session, including automatic restarts with the screen off.
-        streamRotationDeg = displayRotationDeg()
         val app = SparrowApp.get(this)
         val profile = app.profiles.active
+        // Fixed for the whole session, including automatic restarts with the screen off. A locked
+        // profile wins over the display, which may be in any state when started from the backend.
+        streamRotationDeg = lockedRotation(displayRotationDeg(), profile.video.orientation)
         sessionProfile = profile
         val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
             (if (profile.audio.enabled) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
@@ -157,6 +159,13 @@ class StreamingService : LifecycleService() {
         }
         StreamController.update { it.copy(link = LinkState.Reconnecting(3000, reason)) }
         main.postDelayed({ if (!stopping && pipeline == null) launchPipeline() }, 3000)
+    }
+
+    /** [displayDeg] if it matches [lock], else the lock's usual rotation (portrait 0°, landscape 90°). */
+    private fun lockedRotation(displayDeg: Int, lock: OrientationLock): Int = when {
+        lock == OrientationLock.PORTRAIT && displayDeg % 180 != 0 -> 0
+        lock == OrientationLock.LANDSCAPE && displayDeg % 180 == 0 -> 90
+        else -> displayDeg
     }
 
     /** Current rotation of the built-in display, in degrees. */

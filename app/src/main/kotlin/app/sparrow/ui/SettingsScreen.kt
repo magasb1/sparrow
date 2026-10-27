@@ -8,8 +8,11 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,7 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +41,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.sparrow.core.config.FocusMode
+import app.sparrow.core.config.OrientationLock
 import app.sparrow.core.config.Profile
 import app.sparrow.core.config.RateControl
 import app.sparrow.core.config.SrtMode
@@ -54,6 +58,7 @@ private val DETECTABLE = listOf(1, 2, 3, 4, 6, 7, 8, 9, 5, 16, 18, 19, 27, 33)
 
 private val RESOLUTIONS = listOf(640 to 360, 1280 to 720, 1920 to 1080, 3840 to 2160)
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(profiles: ProfileRepository, onBack: () -> Unit) {
     val context = LocalContext.current
@@ -73,166 +78,212 @@ fun SettingsScreen(profiles: ProfileRepository, onBack: () -> Unit) {
     }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(
-            Modifier.fillMaxWidth().systemBarsPadding().verticalScroll(rememberScrollState()).wrapContentWidth().widthIn(max = 680.dp).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
                 Text("Settings · ${p.name}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             }
-
-            Section("Destination") {
-                ChoiceRow("SRT mode", SrtMode.entries, p.destination.mode, { p = p.copy(destination = p.destination.copy(mode = it)) }) {
-                    if (it == SrtMode.CALLER) "Caller" else "Listener"
-                }
-                TextRow(
-                    if (p.destination.mode == SrtMode.CALLER) "Host" else "Bind address (optional)",
-                    p.destination.host, { p = p.copy(destination = p.destination.copy(host = it.trim())) },
-                )
-                NumberRow("Port", p.destination.port, { v -> v.toIntOrNull()?.let { p = p.copy(destination = p.destination.copy(port = it)) } })
-                TextRow("Stream ID", p.destination.streamId, { p = p.copy(destination = p.destination.copy(streamId = it)) })
-                NumberRow("Latency", p.destination.latencyMs, { v -> v.toIntOrNull()?.let { p = p.copy(destination = p.destination.copy(latencyMs = it)) } }, unit = "ms")
-                TextRow(
-                    "Passphrase", p.destination.passphrase, { p = p.copy(destination = p.destination.copy(passphrase = it)) },
-                    secret = true, supporting = "10–79 characters; empty = no encryption. Stored in the Android Keystore.",
-                )
-                ChoiceRow("AES key length", listOf(0, 16, 24, 32), p.destination.keyLength, { p = p.copy(destination = p.destination.copy(keyLength = it)) }) {
-                    if (it == 0) "Default" else "${it * 8}-bit"
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = {
-                        val clip = context.getSystemService(ClipboardManager::class.java).primaryClip
-                        val text = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
-                        if (text != null) applyUrl(text) else Toast.makeText(context, "Clipboard is empty", Toast.LENGTH_SHORT).show()
-                    }) { Text("Paste srt:// URL") }
-                    OutlinedButton(onClick = {
-                        qrPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                    }) { Text("QR from image") }
-                }
-            }
-
-            Section("Video") {
-                if (cameras.isNotEmpty()) {
-                    val selected = cameras.firstOrNull { it.id == p.video.cameraId }
-                    ChoiceRow("Camera", listOf<CameraInfo?>(null) + cameras, selected, { p = p.copy(video = p.video.copy(cameraId = it?.id)) }) {
-                        it?.label ?: "Default back camera"
-                    }
-                }
-                ChoiceRow("Codec", VideoCodec.entries, p.video.codec, { p = p.copy(video = p.video.copy(codec = it)) })
-                ChoiceRow("Resolution", RESOLUTIONS, p.video.width to p.video.height, { (w, h) -> p = p.copy(video = p.video.copy(width = w, height = h)) }) {
-                    "${it.first}×${it.second}"
-                }
-                NumberRow("Frame rate", p.video.fps, { v -> v.toIntOrNull()?.let { p = p.copy(video = p.video.copy(fps = it)) } }, unit = "fps")
-                NumberRow("Bitrate", p.video.bitrateKbps, { v -> v.toIntOrNull()?.let { p = p.copy(video = p.video.copy(bitrateKbps = it)) } }, unit = "kbit/s")
-                ChoiceRow("Rate control", RateControl.entries, p.video.rateControl, { p = p.copy(video = p.video.copy(rateControl = it)) }) {
-                    if (it == RateControl.VBR) "Variable (VBR)" else "Constant (CBR)"
-                }
-                NumberRow("Keyframe interval (GOP)", p.video.gopSeconds, { v -> v.toDoubleOrNull()?.let { p = p.copy(video = p.video.copy(gopSeconds = it)) } }, decimal = true, unit = "s")
-                NumberRow("Initial zoom", p.video.zoomRatio, { v -> v.toDoubleOrNull()?.let { p = p.copy(video = p.video.copy(zoomRatio = it)) } }, decimal = true, unit = "×")
-                ChoiceRow("Focus", FocusMode.entries, p.video.focus, { p = p.copy(video = p.video.copy(focus = it)) }) {
-                    if (it == FocusMode.CONTINUOUS) "Continuous" else "Infinity"
-                }
-                SwitchRow("Stabilisation", p.video.stabilization, { p = p.copy(video = p.video.copy(stabilization = it)) })
-            }
-
-            Section("Audio") {
-                SwitchRow("AAC audio", p.audio.enabled, { p = p.copy(audio = p.audio.copy(enabled = it)) })
-                if (p.audio.enabled) {
-                    NumberRow("Bitrate", p.audio.bitrateKbps, { v -> v.toIntOrNull()?.let { p = p.copy(audio = p.audio.copy(bitrateKbps = it)) } }, unit = "kbit/s")
-                    ChoiceRow("Sample rate", listOf(44100, 48000), p.audio.sampleRate, { p = p.copy(audio = p.audio.copy(sampleRate = it)) }) { "${it / 1000.0} kHz" }
-                    ChoiceRow("Channels", listOf(1, 2), p.audio.channels, { p = p.copy(audio = p.audio.copy(channels = it)) }) { if (it == 1) "Mono" else "Stereo" }
-                }
-            }
-
-            Section("Metadata (ST 0601)") {
-                NumberRow("Rate", p.metadata.rateHz, { v -> v.toDoubleOrNull()?.let { p = p.copy(metadata = p.metadata.copy(rateHz = it)) } }, decimal = true, unit = "Hz")
-                TextRow("Mission ID (tag 3)", p.metadata.missionId, { p = p.copy(metadata = p.metadata.copy(missionId = it)) })
-                TextRow("Platform designation (tag 10)", p.metadata.platformDesignation, { p = p.copy(metadata = p.metadata.copy(platformDesignation = it)) })
-                TextRow("Image source sensor (tag 11)", p.metadata.imageSourceSensor, { p = p.copy(metadata = p.metadata.copy(imageSourceSensor = it)) })
-                TextRow("Call sign (tag 59)", p.metadata.callSign, { p = p.copy(metadata = p.metadata.copy(callSign = it)) })
-                NumberRow("Ground elevation (MSL)", p.metadata.groundElevationM, { v -> v.toDoubleOrNull()?.let { p = p.copy(metadata = p.metadata.copy(groundElevationM = it)) } }, decimal = true, unit = "m")
-                NumberRow("Heading correction", p.metadata.headingOffsetDeg, { v -> v.toDoubleOrNull()?.let { p = p.copy(metadata = p.metadata.copy(headingOffsetDeg = it)) } }, decimal = true, unit = "°")
-                NumberRow("LS version (tag 65)", p.metadata.lsVersion, { v -> v.toIntOrNull()?.let { p = p.copy(metadata = p.metadata.copy(lsVersion = it)) } })
-                ChoiceRow("KLV carriage", KlvCarriage.entries, p.metadata.carriage, { p = p.copy(metadata = p.metadata.copy(carriage = it)) }) {
-                    if (it == KlvCarriage.SYNC) "Synchronous (0x15)" else "Asynchronous (0x06)"
-                }
-                Text("Tags", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Tag.optionalTags.forEach { tag ->
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        Checkbox(
-                            checked = tag.id in p.metadata.enabledTags,
-                            onCheckedChange = { on ->
-                                val tags = if (on) p.metadata.enabledTags + tag.id else p.metadata.enabledTags - tag.id
-                                p = p.copy(metadata = p.metadata.copy(enabledTags = tags))
-                            },
-                        )
-                        Text("${tag.id} · ${tag.label}")
-                    }
-                }
-            }
-
-            Section("Object detection") {
-                SwitchRow(
-                    "Detect objects", p.detection.enabled, { p = p.copy(detection = p.detection.copy(enabled = it)) },
-                    supporting = "RF-DETR Nano on the phone. Boxes show on the viewfinder; costs battery.",
-                )
-                if (p.detection.enabled) {
-                    ChoiceRow("Analysis rate", listOf(2.0, 4.0, 8.0), p.detection.rateHz, { p = p.copy(detection = p.detection.copy(rateHz = it)) }) {
-                        "%.0f Hz".format(it)
-                    }
-                    ChoiceRow("Minimum confidence", listOf(0.35, 0.5, 0.7), p.detection.minConfidence, { p = p.copy(detection = p.detection.copy(minConfidence = it)) }) {
-                        "%.0f %%".format(it * 100)
-                    }
-                    Text("Classes", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        DETECTABLE.forEach { id ->
-                            androidx.compose.material3.FilterChip(
-                                selected = id in p.detection.classes,
-                                onClick = {
-                                    val c = if (id in p.detection.classes) p.detection.classes - id else p.detection.classes + id
-                                    p = p.copy(detection = p.detection.copy(classes = c))
-                                },
-                                label = { Text(CocoClasses.displayName(id)) },
-                            )
-                        }
-                    }
-                    SwitchRow(
-                        "Send targets in KLV", p.detection.sendVmti, { p = p.copy(detection = p.detection.copy(sendVmti = it)) },
-                        supporting = "MISB ST 0903 VMTI in ST 0601 tag 74, with ground positions when GNSS allows.",
+            Column(
+                Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).wrapContentWidth().widthIn(max = 680.dp)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (p.managed) {
+                    Text(
+                        "This profile is managed by the backend and changes come from the server. " +
+                            "Duplicate it under Profiles to make a local copy you can edit.",
+                        color = MaterialTheme.colorScheme.primary,
                     )
                 }
-            }
 
-            Section("Advanced") {
-                SwitchRow("Adaptive bitrate", p.advanced.adaptiveBitrate, { p = p.copy(advanced = p.advanced.copy(adaptiveBitrate = it)) },
-                    supporting = "Lowers the video bitrate when SRT reports loss or a growing send buffer.")
-                if (p.advanced.adaptiveBitrate) {
-                    NumberRow("Minimum bitrate", p.advanced.minBitrateKbps, { v -> v.toIntOrNull()?.let { p = p.copy(advanced = p.advanced.copy(minBitrateKbps = it)) } }, unit = "kbit/s")
-                    NumberRow("Maximum bitrate", p.advanced.maxBitrateKbps, { v -> v.toIntOrNull()?.let { p = p.copy(advanced = p.advanced.copy(maxBitrateKbps = it)) } }, unit = "kbit/s")
+                Section("Destination") {
+                    ChoiceRow("SRT mode", SrtMode.entries, p.destination.mode, { p = p.copy(destination = p.destination.copy(mode = it)) }) {
+                        if (it == SrtMode.CALLER) "Caller" else "Listener"
+                    }
+                    TextRow(
+                        if (p.destination.mode == SrtMode.CALLER) "Host" else "Bind address (optional)",
+                        p.destination.host, { p = p.copy(destination = p.destination.copy(host = it.trim())) },
+                    )
+                    TwoUp(
+                        { NumberRow("Port", p.destination.port, { v -> v.toIntOrNull()?.let { p = p.copy(destination = p.destination.copy(port = it)) } }) },
+                        { NumberRow("Latency", p.destination.latencyMs, { v -> v.toIntOrNull()?.let { p = p.copy(destination = p.destination.copy(latencyMs = it)) } }, unit = "ms") },
+                    )
+                    TextRow("Stream ID", p.destination.streamId, { p = p.copy(destination = p.destination.copy(streamId = it)) })
+                    TextRow(
+                        "Passphrase", p.destination.passphrase, { p = p.copy(destination = p.destination.copy(passphrase = it)) },
+                        secret = true, supporting = "10–79 characters; empty = no encryption. Stored in the Android Keystore.",
+                    )
+                    // The key length only matters with encryption on.
+                    if (p.destination.passphrase.isNotEmpty()) {
+                        ChoiceRow("AES key length", listOf(0, 16, 24, 32), p.destination.keyLength, { p = p.copy(destination = p.destination.copy(keyLength = it)) }) {
+                            if (it == 0) "Default" else "${it * 8}-bit"
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = {
+                            val clip = context.getSystemService(ClipboardManager::class.java).primaryClip
+                            val text = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+                            if (text != null) applyUrl(text) else Toast.makeText(context, "Clipboard is empty", Toast.LENGTH_SHORT).show()
+                        }) { Text("Paste srt:// URL") }
+                        OutlinedButton(onClick = {
+                            qrPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        }) { Text("QR from image") }
+                    }
                 }
-                NumberRow("Mux delay (PTS − PCR)", p.advanced.ptsDelayMs, { v -> v.toIntOrNull()?.let { p = p.copy(advanced = p.advanced.copy(ptsDelayMs = it)) } }, unit = "ms")
-                SwitchRow("Record locally", p.advanced.recordLocally, { p = p.copy(advanced = p.advanced.copy(recordLocally = it)) },
-                    supporting = "Saves the sent transport stream to the app's Movies folder.")
+
+                Section("Video") {
+                    if (cameras.isNotEmpty()) {
+                        val selected = cameras.firstOrNull { it.id == p.video.cameraId }
+                        ChoiceRow("Camera", listOf<CameraInfo?>(null) + cameras, selected, { p = p.copy(video = p.video.copy(cameraId = it?.id)) }) {
+                            it?.label ?: "Default back camera"
+                        }
+                    }
+                    ChoiceRow("Codec", VideoCodec.entries, p.video.codec, { p = p.copy(video = p.video.copy(codec = it)) })
+                    ChoiceRow("Resolution", RESOLUTIONS, p.video.width to p.video.height, { (w, h) -> p = p.copy(video = p.video.copy(width = w, height = h)) }) {
+                        "${it.first}×${it.second}"
+                    }
+                    TwoUp(
+                        { NumberRow("Frame rate", p.video.fps, { v -> v.toIntOrNull()?.let { p = p.copy(video = p.video.copy(fps = it)) } }, unit = "fps") },
+                        { NumberRow("Bitrate", p.video.bitrateKbps, { v -> v.toIntOrNull()?.let { p = p.copy(video = p.video.copy(bitrateKbps = it)) } }, unit = "kbit/s") },
+                    )
+                    ChoiceRow("Rate control", RateControl.entries, p.video.rateControl, { p = p.copy(video = p.video.copy(rateControl = it)) }) {
+                        if (it == RateControl.VBR) "Variable (VBR)" else "Constant (CBR)"
+                    }
+                    TwoUp(
+                        { NumberRow("Keyframe interval", p.video.gopSeconds, { v -> v.toDoubleOrNull()?.let { p = p.copy(video = p.video.copy(gopSeconds = it)) } }, decimal = true, unit = "s") },
+                        { NumberRow("Initial zoom", p.video.zoomRatio, { v -> v.toDoubleOrNull()?.let { p = p.copy(video = p.video.copy(zoomRatio = it)) } }, decimal = true, unit = "×") },
+                    )
+                    ChoiceRow("Orientation", OrientationLock.entries, p.video.orientation, { p = p.copy(video = p.video.copy(orientation = it)) }) {
+                        when (it) {
+                            OrientationLock.AUTO -> "Auto"
+                            OrientationLock.PORTRAIT -> "Portrait"
+                            OrientationLock.LANDSCAPE -> "Landscape"
+                        }
+                    }
+                    ChoiceRow("Focus", FocusMode.entries, p.video.focus, { p = p.copy(video = p.video.copy(focus = it)) }) {
+                        if (it == FocusMode.CONTINUOUS) "Continuous" else "Infinity"
+                    }
+                    SwitchRow("Stabilisation", p.video.stabilization, { p = p.copy(video = p.video.copy(stabilization = it)) })
+                }
+
+                Section("Audio", startOpen = false, summary = if (p.audio.enabled) "AAC · ${p.audio.bitrateKbps} kbit/s" else "Off") {
+                    SwitchRow("AAC audio", p.audio.enabled, { p = p.copy(audio = p.audio.copy(enabled = it)) })
+                    if (p.audio.enabled) {
+                        NumberRow("Bitrate", p.audio.bitrateKbps, { v -> v.toIntOrNull()?.let { p = p.copy(audio = p.audio.copy(bitrateKbps = it)) } }, unit = "kbit/s")
+                        ChoiceRow("Sample rate", listOf(44100, 48000), p.audio.sampleRate, { p = p.copy(audio = p.audio.copy(sampleRate = it)) }) { "${it / 1000.0} kHz" }
+                        ChoiceRow("Channels", listOf(1, 2), p.audio.channels, { p = p.copy(audio = p.audio.copy(channels = it)) }) { if (it == 1) "Mono" else "Stereo" }
+                    }
+                }
+
+                Section("KLV metadata") {
+                    TwoUp(
+                        { TextRow("Mission ID", p.metadata.missionId, { p = p.copy(metadata = p.metadata.copy(missionId = it)) }) },
+                        { TextRow("Call sign", p.metadata.callSign, { p = p.copy(metadata = p.metadata.copy(callSign = it)) }) },
+                    )
+                    TwoUp(
+                        { NumberRow("Ground elevation", p.metadata.groundElevationM, { v -> v.toDoubleOrNull()?.let { p = p.copy(metadata = p.metadata.copy(groundElevationM = it)) } }, decimal = true, unit = "m MSL") },
+                        { NumberRow("Heading correction", p.metadata.headingOffsetDeg, { v -> v.toDoubleOrNull()?.let { p = p.copy(metadata = p.metadata.copy(headingOffsetDeg = it)) } }, decimal = true, unit = "°") },
+                    )
+                    Disclosure("More KLV options") {
+                        TwoUp(
+                            { TextRow("Platform (tag 10)", p.metadata.platformDesignation, { p = p.copy(metadata = p.metadata.copy(platformDesignation = it)) }) },
+                            { TextRow("Sensor (tag 11)", p.metadata.imageSourceSensor, { p = p.copy(metadata = p.metadata.copy(imageSourceSensor = it)) }) },
+                        )
+                        NumberRow("Rate", p.metadata.rateHz, { v -> v.toDoubleOrNull()?.let { p = p.copy(metadata = p.metadata.copy(rateHz = it)) } }, decimal = true, unit = "Hz")
+                        ChoiceRow("Carriage", KlvCarriage.entries, p.metadata.carriage, { p = p.copy(metadata = p.metadata.copy(carriage = it)) }) {
+                            if (it == KlvCarriage.SYNC) "Synchronous (0x15)" else "Asynchronous (0x06)"
+                        }
+                        Text(
+                            "ST 0601 tags (${p.metadata.enabledTags.size} of ${Tag.optionalTags.size}; each is sent only when its value is known)",
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Tag.optionalTags.forEach { tag ->
+                                FilterChip(
+                                    selected = tag.id in p.metadata.enabledTags,
+                                    onClick = {
+                                        val tags = p.metadata.enabledTags.let { if (tag.id in it) it - tag.id else it + tag.id }
+                                        p = p.copy(metadata = p.metadata.copy(enabledTags = tags))
+                                    },
+                                    label = { Text("${tag.id} ${tag.label}") },
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Section("Object detection") {
+                    SwitchRow(
+                        "Detect objects", p.detection.enabled, { p = p.copy(detection = p.detection.copy(enabled = it)) },
+                        supporting = "YOLO26n on the phone. Boxes show on the viewfinder; costs battery.",
+                    )
+                    if (p.detection.enabled) {
+                        SwitchRow(
+                            "Send targets in KLV", p.detection.sendVmti, { p = p.copy(detection = p.detection.copy(sendVmti = it)) },
+                            supporting = "MISB ST 0903 VMTI in ST 0601 tag 74, with ground positions when GNSS allows.",
+                        )
+                        ChoiceRow("Analysis rate", listOf(2.0, 4.0, 8.0), p.detection.rateHz, { p = p.copy(detection = p.detection.copy(rateHz = it)) }) {
+                            "%.0f Hz".format(it)
+                        }
+                        ChoiceRow("Minimum confidence", listOf(0.35, 0.5, 0.7), p.detection.minConfidence, { p = p.copy(detection = p.detection.copy(minConfidence = it)) }) {
+                            "%.0f %%".format(it * 100)
+                        }
+                        Text("Classes", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            DETECTABLE.forEach { id ->
+                                FilterChip(
+                                    selected = id in p.detection.classes,
+                                    onClick = {
+                                        val c = if (id in p.detection.classes) p.detection.classes - id else p.detection.classes + id
+                                        p = p.copy(detection = p.detection.copy(classes = c))
+                                    },
+                                    label = { Text(CocoClasses.displayName(id)) },
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Section(
+                    "Advanced", startOpen = false,
+                    summary = listOfNotNull(
+                        "Adaptive bitrate".takeIf { p.advanced.adaptiveBitrate },
+                        "Recording locally".takeIf { p.advanced.recordLocally },
+                        "Mux delay ${p.advanced.ptsDelayMs} ms",
+                    ).joinToString(" · "),
+                ) {
+                    SwitchRow("Adaptive bitrate", p.advanced.adaptiveBitrate, { p = p.copy(advanced = p.advanced.copy(adaptiveBitrate = it)) },
+                        supporting = "Lowers the video bitrate when SRT reports loss or a growing send buffer.")
+                    if (p.advanced.adaptiveBitrate) {
+                        TwoUp(
+                            { NumberRow("Minimum bitrate", p.advanced.minBitrateKbps, { v -> v.toIntOrNull()?.let { p = p.copy(advanced = p.advanced.copy(minBitrateKbps = it)) } }, unit = "kbit/s") },
+                            { NumberRow("Maximum bitrate", p.advanced.maxBitrateKbps, { v -> v.toIntOrNull()?.let { p = p.copy(advanced = p.advanced.copy(maxBitrateKbps = it)) } }, unit = "kbit/s") },
+                        )
+                    }
+                    NumberRow("Mux delay (PTS − PCR)", p.advanced.ptsDelayMs, { v -> v.toIntOrNull()?.let { p = p.copy(advanced = p.advanced.copy(ptsDelayMs = it)) } }, unit = "ms")
+                    SwitchRow("Record locally", p.advanced.recordLocally, { p = p.copy(advanced = p.advanced.copy(recordLocally = it)) },
+                        supporting = "Saves the sent transport stream to the app's Movies folder.")
+                }
             }
 
-            if (p.managed) {
-                Text(
-                    "This profile is managed by the backend and changes come from the server. " +
-                        "Duplicate it under Profiles to make a local copy you can edit.",
-                    color = MaterialTheme.colorScheme.primary,
-                )
+            // Pinned below the list so Save and any errors are visible without scrolling to the end.
+            Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    Modifier.wrapContentWidth().widthIn(max = 680.dp).padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    errors.forEach { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                    Button(
+                        onClick = {
+                            profiles.save(p)
+                            Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show()
+                            onBack()
+                        },
+                        enabled = errors.isEmpty() && !p.managed,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Save") }
+                }
             }
-            errors.forEach { Text(it, color = MaterialTheme.colorScheme.error) }
-            Button(
-                onClick = {
-                    profiles.save(p)
-                    Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show()
-                    onBack()
-                },
-                enabled = errors.isEmpty() && !p.managed,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Save") }
         }
     }
 }

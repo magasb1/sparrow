@@ -94,6 +94,21 @@ class TrackerTest {
     }
 
     @Test
+    fun `one-off detections and borderline scores never confirm`() {
+        val t = Tracker(highScore = 0.5f)
+        // A flicker: seen once, missed, seen again. BYTE drops the first so the ids differ.
+        t.update(listOf(det(0.10f)), 0)
+        t.update(emptyList(), 250_000)
+        t.update(listOf(det(0.10f)), 500_000)
+        assertTrue(t.snapshot(500_000).isEmpty())
+        // High enough to match a track but below the 0.6 needed to start one.
+        val u = Tracker(highScore = 0.5f)
+        u.update(listOf(det(0.5f, score = 0.55f)), 0)
+        u.update(listOf(det(0.5f, score = 0.55f)), 250_000)
+        assertTrue(u.snapshot(250_000).isEmpty())
+    }
+
+    @Test
     fun `classes do not merge and stale tracks expire`() {
         val t = Tracker(maxAgeUs = 1_000_000)
         repeat(3) { i -> t.update(listOf(det(0.5f, cls = 1), det(0.5f, cls = 3)), i * 200_000L) }
@@ -125,13 +140,13 @@ class TrackerTest {
     }
 }
 
-class RfDetrMathTest {
+class YoloMathTest {
     @Test
     fun `sensor point mapping inverts the clockwise stream rotation`() {
         // A sensor point near the top-left lands top-right after a 90° clockwise turn.
         val (s, t) = 0.9f to 0.1f // stream: top right
         fun check(expected: Pair<Float, Float>, r: Int) {
-            val (x, y) = RfDetr.sensorPoint(s, t, r)
+            val (x, y) = Yolo.sensorPoint(s, t, r)
             assertEquals(expected.first, x, 1e-6f)
             assertEquals(expected.second, y, 1e-6f)
         }
@@ -142,22 +157,27 @@ class RfDetrMathTest {
     }
 
     @Test
-    fun `postprocess decodes boxes, filters classes and suppresses duplicates`() {
-        val boxes = FloatArray(RfDetr.QUERIES * 4)
-        val logits = FloatArray(RfDetr.QUERIES * RfDetr.CLASS_SLOTS) { -10f }
-        fun put(q: Int, cls: Int, logit: Float, cx: Float) {
-            logits[q * RfDetr.CLASS_SLOTS + cls] = logit
-            boxes[q * 4] = cx; boxes[q * 4 + 1] = 0.5f; boxes[q * 4 + 2] = 0.2f; boxes[q * 4 + 3] = 0.4f
+    fun `letterbox keeps the aspect and centres the image`() {
+        assertEquals(Letterbox(0f, 112f, 512f, 288f), Letterbox.of(1280, 720, 0, 512))
+        assertEquals(Letterbox(112f, 0f, 288f, 512f), Letterbox.of(1280, 720, 90, 512))
+    }
+
+    @Test
+    fun `postprocess maps rows to COCO ids and undoes the letterbox`() {
+        val lb = Letterbox.of(1280, 720, 0, 512)
+        val out = FloatArray(Yolo.ROWS * 6)
+        fun put(r: Int, cls: Int, score: Float, x1: Float, y1: Float, x2: Float, y2: Float) {
+            floatArrayOf(x1, y1, x2, y2, score, cls.toFloat()).copyInto(out, r * 6)
         }
-        put(0, 1, 3f, 0.3f)    // person, 0.95
-        put(1, 1, 2f, 0.301f)  // duplicate person, suppressed
-        put(2, 3, 1f, 0.7f)    // car, 0.73
-        put(3, 44, 4f, 0.5f)   // bottle, not watched
-        put(4, 3, -1f, 0.1f)   // car below threshold
-        val d = RfDetr.postprocess(boxes, logits, 0.5f, CocoClasses.DEFAULT_WATCH)
+        put(0, 0, 0.9f, 128f, 112f, 256f, 400f)  // person (index 0 -> COCO 1)
+        put(1, 2, 0.7f, 0f, 112f, 51.2f, 140.8f) // car (index 2 -> COCO 3)
+        put(2, 39, 0.9f, 0f, 112f, 10f, 140f)    // bottle (index 39 -> COCO 44), not watched
+        put(3, 2, 0.3f, 0f, 112f, 10f, 140f)     // car below threshold
+        val d = Yolo.postprocess(out, lb, 0.5f, CocoClasses.DEFAULT_WATCH)
         assertEquals(listOf(1, 3), d.map { it.classId })
-        assertEquals(0.9526f, d[0].score, 1e-3f)
-        assertEquals(Box(0.2f, 0.3f, 0.4f, 0.7f).x1, d[0].box.x1, 1e-6f)
+        assertEquals(Box(0.25f, 0f, 0.5f, 1f), d[0].box)
+        assertEquals(0.1f, d[1].box.x2, 1e-6f)
+        assertEquals(0.1f, d[1].box.y2, 1e-6f)
     }
 
     @Test

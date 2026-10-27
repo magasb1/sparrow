@@ -613,7 +613,7 @@ private fun StatsPanel(status: StreamStatus, profile: Profile) {
             if (status.gnss.compassLow) WarnAmber else Color.White,
         )
         status.detection?.let { d ->
-            StatLine("Detection", "RF-DETR Nano · %.1f Hz · %d ms".format(d.rateHz, d.inferenceMs))
+            StatLine("Detection", "YOLO26n · %.1f Hz · %d ms".format(d.rateHz, d.inferenceMs))
         }
         StatLine("Metadata", "ST 0601.${profile.metadata.lsVersion} · ${"%.0f".format(profile.metadata.rateHz)} Hz · ${if (profile.metadata.carriage.name == "SYNC") "sync" else "async"}")
         status.recordingPath?.let { StatLine("Recording", it.substringAfterLast('/')) }

@@ -23,7 +23,8 @@ class Imapb(val min: Double, val max: Double, val length: Int) {
     fun encode(value: Double): Long {
         require(!value.isNaN()) { "NaN is not encoded" }
         val v = value.coerceIn(min, max)
-        return (sF * (v - min) + zOffset).toLong()
+        // The top bit flags special values (ST 1201 §8), so a power-of-two range must not reach it.
+        return (sF * (v - min) + zOffset).toLong().coerceAtMost((1L shl dPow) - 1)
     }
 
     fun decode(raw: Long): Double = sR * (raw - zOffset) + min

@@ -90,8 +90,8 @@ class DefaultProfileTest {
         val p = Profile(destination = Destination(host = "h"))
         assertEquals(1280 to 720, p.video.width to p.video.height)
         assertEquals(15, p.video.fps)
-        assertEquals(1200, p.video.bitrateKbps)
-        assertEquals(app.sparrow.core.config.RateControl.VBR, p.video.rateControl)
+        assertEquals(1000, p.video.bitrateKbps)
+        assertEquals(app.sparrow.core.config.RateControl.CBR, p.video.rateControl)
         assertEquals(2.0, p.video.gopSeconds, 0.0)
         // ABR may only lower the bitrate.
         assertEquals(p.video.bitrateKbps, p.advanced.maxBitrateKbps)

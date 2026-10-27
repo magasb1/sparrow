@@ -18,14 +18,18 @@ data class TrackedObject(
  * - BYTE association: detections scoring at least [highScore] are matched first (IoU with the
  *   predicted box, greedy, per class); the low-scoring rest are then matched to tracks that were
  *   seen in the previous update and are still unmatched, which keeps ids through partial occlusion
- *   and motion blur. Only high-scoring detections start tracks;
- * - a track is confirmed after [minHits] matches and dropped after [maxAgeUs] without one.
+ *   and motion blur. Only detections scoring at least [newTrackScore] start tracks;
+ * - a track is confirmed after [minHits] matches and dropped after [maxAgeUs] without one; an
+ *   unconfirmed track that misses an update is dropped at once, so one-off false positives never
+ *   confirm.
  *
  * [snapshot] extrapolates tracks to any video frame, at most [maxExtrapolationUs] past their last
  * detection.
  */
 class Tracker(
     private val highScore: Float = 0.5f,
+    /** ByteTrack's det_thresh: a little above [highScore], so weak one-offs do not start tracks. */
+    private val newTrackScore: Float = highScore + 0.1f,
     private val iouThreshold: Float = 0.3f,
     /** Low-scoring detections need a tighter match: they are often fragments. */
     private val lowIouThreshold: Float = 0.5f,
@@ -109,7 +113,8 @@ class Tracker(
         val recent = unmatched.filter { it.timeUs == lastUpdateUs }.toMutableList()
         match(recent, low, lowIouThreshold, timeUs)
 
-        for (d in newTracks) tracks.add(Track(nextId++, d.classId, d.box, d.score, timeUs))
+        tracks.removeAll { it.hits < minHits && it.timeUs != timeUs }
+        for (d in newTracks) if (d.score >= newTrackScore) tracks.add(Track(nextId++, d.classId, d.box, d.score, timeUs))
         lastUpdateUs = timeUs
     }
 

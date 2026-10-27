@@ -3,8 +3,10 @@ package app.sparrow.protocol
 import app.sparrow.core.config.AdvancedSettings
 import app.sparrow.core.config.AudioSettings
 import app.sparrow.core.config.Destination
+import app.sparrow.core.config.DetectionSettings
 import app.sparrow.core.config.FocusMode
 import app.sparrow.core.config.MetadataSettings
+import app.sparrow.core.config.OrientationLock
 import app.sparrow.core.config.Profile
 import app.sparrow.core.config.RateControl
 import app.sparrow.core.config.SrtMode
@@ -14,11 +16,13 @@ import app.sparrow.core.ts.VideoCodec
 import app.sparrow.protocol.v1.advancedSettings
 import app.sparrow.protocol.v1.audioSettings
 import app.sparrow.protocol.v1.destination
+import app.sparrow.protocol.v1.detectionSettings
 import app.sparrow.protocol.v1.metadataSettings
 import app.sparrow.protocol.v1.profile
 import app.sparrow.protocol.v1.videoSettings
 import app.sparrow.protocol.v1.FocusMode as PbFocusMode
 import app.sparrow.protocol.v1.KlvCarriage as PbKlvCarriage
+import app.sparrow.protocol.v1.OrientationLock as PbOrientationLock
 import app.sparrow.protocol.v1.Profile as PbProfile
 import app.sparrow.protocol.v1.RateControl as PbRateControl
 import app.sparrow.protocol.v1.SrtMode as PbSrtMode
@@ -65,6 +69,11 @@ object ProfileMapper {
                 FocusMode.INFINITY -> PbFocusMode.FOCUS_MODE_INFINITY
             }
             stabilization = p.video.stabilization
+            orientation = when (p.video.orientation) {
+                OrientationLock.AUTO -> PbOrientationLock.ORIENTATION_LOCK_UNSPECIFIED
+                OrientationLock.PORTRAIT -> PbOrientationLock.ORIENTATION_LOCK_PORTRAIT
+                OrientationLock.LANDSCAPE -> PbOrientationLock.ORIENTATION_LOCK_LANDSCAPE
+            }
         }
         audio = audioSettings {
             enabled = p.audio.enabled
@@ -80,11 +89,19 @@ object ProfileMapper {
             imageSourceSensor = p.metadata.imageSourceSensor
             callSign = p.metadata.callSign
             groundElevationM = p.metadata.groundElevationM
+            headingOffsetDeg = p.metadata.headingOffsetDeg
             lsVersion = p.metadata.lsVersion
             carriage = when (p.metadata.carriage) {
                 KlvCarriage.SYNC -> PbKlvCarriage.KLV_CARRIAGE_SYNC
                 KlvCarriage.ASYNC -> PbKlvCarriage.KLV_CARRIAGE_ASYNC
             }
+        }
+        detection = detectionSettings {
+            enabled = p.detection.enabled
+            rateHz = p.detection.rateHz
+            minConfidence = p.detection.minConfidence
+            classes += p.detection.classes.sorted()
+            sendVmti = p.detection.sendVmti
         }
         advanced = advancedSettings {
             adaptiveBitrate = p.advanced.adaptiveBitrate
@@ -119,8 +136,8 @@ object ProfileMapper {
             video = VideoSettings(
                 cameraId = if (v.hasCameraId()) v.cameraId else null,
                 codec = when (v.codec) {
-                    PbVideoCodec.VIDEO_CODEC_H265 -> VideoCodec.H265
-                    else -> VideoCodec.H264
+                    PbVideoCodec.VIDEO_CODEC_H264 -> VideoCodec.H264
+                    else -> VideoCodec.H265
                 },
                 width = v.width,
                 height = v.height,
@@ -128,8 +145,8 @@ object ProfileMapper {
                 bitrateKbps = v.bitrateKbps,
                 gopSeconds = v.gopSeconds,
                 rateControl = when (v.rateControl) {
-                    PbRateControl.RATE_CONTROL_CBR -> RateControl.CBR
-                    else -> RateControl.VBR
+                    PbRateControl.RATE_CONTROL_VBR -> RateControl.VBR
+                    else -> RateControl.CBR
                 },
                 zoomRatio = v.zoomRatio,
                 focus = when (v.focus) {
@@ -137,6 +154,11 @@ object ProfileMapper {
                     else -> FocusMode.CONTINUOUS
                 },
                 stabilization = v.stabilization,
+                orientation = when (v.orientation) {
+                    PbOrientationLock.ORIENTATION_LOCK_PORTRAIT -> OrientationLock.PORTRAIT
+                    PbOrientationLock.ORIENTATION_LOCK_LANDSCAPE -> OrientationLock.LANDSCAPE
+                    else -> OrientationLock.AUTO
+                },
             ),
             audio = AudioSettings(
                 enabled = a.enabled,
@@ -152,12 +174,22 @@ object ProfileMapper {
                 imageSourceSensor = m.imageSourceSensor,
                 callSign = m.callSign,
                 groundElevationM = m.groundElevationM,
+                headingOffsetDeg = m.headingOffsetDeg,
                 lsVersion = m.lsVersion,
                 carriage = when (m.carriage) {
                     PbKlvCarriage.KLV_CARRIAGE_ASYNC -> KlvCarriage.ASYNC
                     else -> KlvCarriage.SYNC
                 },
             ),
+            detection = if (!p.hasDetection()) DetectionSettings() else p.detection.let { det ->
+                DetectionSettings(
+                    enabled = det.enabled,
+                    rateHz = det.rateHz,
+                    minConfidence = det.minConfidence,
+                    classes = det.classesList.toSet(),
+                    sendVmti = det.sendVmti,
+                )
+            },
             advanced = AdvancedSettings(
                 adaptiveBitrate = adv.adaptiveBitrate,
                 minBitrateKbps = adv.minBitrateKbps,

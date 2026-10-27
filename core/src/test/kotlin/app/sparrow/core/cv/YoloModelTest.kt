@@ -12,12 +12,12 @@ import java.nio.FloatBuffer
 import javax.imageio.ImageIO
 
 /**
- * Runs the shipped INT8 RF-DETR model on COCO val2017 images with the app's own Kotlin pre- and
+ * Runs the shipped YOLO26n model on COCO val2017 images with the app's own Kotlin pre- and
  * post-processing, through both the ARGB and the YUV path. Needs network access for the images
  * (they are not committed); skipped otherwise.
  */
-class RfDetrModelTest {
-    private val model = File("../app/src/main/assets/${RfDetr.ASSET}")
+class YoloModelTest {
+    private val model = File("../app/src/main/assets/${Yolo.ASSET}")
 
     private fun image(id: String): File? = runCatching {
         val f = File(System.getProperty("java.io.tmpdir"), "sparrow-coco-$id.jpg")
@@ -25,15 +25,14 @@ class RfDetrModelTest {
         f
     }.getOrNull()
 
-    private fun run(input: FloatArray): List<Detection> {
+    private fun run(input: FloatArray, lb: Letterbox): List<Detection> {
         val env = OrtEnvironment.getEnvironment()
         env.createSession(model.readBytes()).use { session ->
-            val n = RfDetr.INPUT_SIZE.toLong()
+            val n = Yolo.INPUT_SIZE.toLong()
             OnnxTensor.createTensor(env, FloatBuffer.wrap(input), longArrayOf(1, 3, n, n)).use { tensor ->
-                session.run(mapOf(RfDetr.INPUT_NAME to tensor)).use { r ->
-                    val boxes = (r.get(RfDetr.BOXES_OUTPUT).get() as OnnxTensor).floatBuffer.let { b -> FloatArray(b.remaining()).also { b.get(it) } }
-                    val logits = (r.get(RfDetr.LOGITS_OUTPUT).get() as OnnxTensor).floatBuffer.let { b -> FloatArray(b.remaining()).also { b.get(it) } }
-                    return RfDetr.postprocess(boxes, logits, 0.5f, CocoClasses.names.keys)
+                session.run(mapOf(Yolo.INPUT_NAME to tensor)).use { r ->
+                    val rows = (r.get(Yolo.OUTPUT_NAME).get() as OnnxTensor).floatBuffer.let { b -> FloatArray(b.remaining()).also { b.get(it) } }
+                    return Yolo.postprocess(rows, lb, 0.5f, CocoClasses.names.keys)
                 }
             }
         }
@@ -64,15 +63,13 @@ class RfDetrModelTest {
         assumeTrue("COCO image not reachable", file != null)
         val img = ImageIO.read(file)
         val argb = img.getRGB(0, 0, img.width, img.height, null, 0, img.width)
-        val input = FloatArray(3 * RfDetr.INPUT_SIZE * RfDetr.INPUT_SIZE)
+        val input = FloatArray(3 * Yolo.INPUT_SIZE * Yolo.INPUT_SIZE)
 
-        RfDetr.preprocessArgb(argb, img.width, img.height, 0, input)
-        val fromArgb = run(input)
+        val fromArgb = run(input, Yolo.preprocessArgb(argb, img.width, img.height, 0, input))
         assertEquals(2, fromArgb.count { it.classId == 17 && it.score > 0.8f })
         assertTrue(fromArgb.any { it.classId == 75 })
 
-        RfDetr.preprocess(toYuv(argb, img.width, img.height), 0, input)
-        val fromYuv = run(input)
+        val fromYuv = run(input, Yolo.preprocess(toYuv(argb, img.width, img.height), 0, input))
         assertEquals(2, fromYuv.count { it.classId == 17 && it.score > 0.8f })
         // Both paths agree on the cat boxes.
         val a = fromArgb.filter { it.classId == 17 }.sortedBy { it.box.cx }
@@ -91,9 +88,8 @@ class RfDetrModelTest {
         // Simulate a sensor image that must be turned 90° clockwise to be upright: rotate 90° CCW.
         val sensor = IntArray(w * h)
         for (y in 0 until h) for (x in 0 until w) sensor[(w - 1 - x) * h + y] = upright[y * w + x]
-        val input = FloatArray(3 * RfDetr.INPUT_SIZE * RfDetr.INPUT_SIZE)
-        RfDetr.preprocessArgb(sensor, h, w, 90, input)
-        val person = run(input).filter { it.classId == 1 }
+        val input = FloatArray(3 * Yolo.INPUT_SIZE * Yolo.INPUT_SIZE)
+        val person = run(input, Yolo.preprocessArgb(sensor, h, w, 90, input)).filter { it.classId == 1 }
         assertTrue("person found after rotation: $person", person.any { it.score > 0.8f })
     }
 }

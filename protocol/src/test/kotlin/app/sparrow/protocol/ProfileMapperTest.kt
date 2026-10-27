@@ -3,8 +3,10 @@ package app.sparrow.protocol
 import app.sparrow.core.config.AdvancedSettings
 import app.sparrow.core.config.AudioSettings
 import app.sparrow.core.config.Destination
+import app.sparrow.core.config.DetectionSettings
 import app.sparrow.core.config.FocusMode
 import app.sparrow.core.config.MetadataSettings
+import app.sparrow.core.config.OrientationLock
 import app.sparrow.core.config.Profile
 import app.sparrow.core.config.RateControl
 import app.sparrow.core.config.SrtMode
@@ -22,9 +24,10 @@ class ProfileMapperTest {
         id = "p-1",
         name = "Field team",
         destination = Destination(SrtMode.LISTENER, "10.0.0.5", 9001, "#!::r=cam-01", 800, "secret-passphrase", 32),
-        video = VideoSettings("2", VideoCodec.H265, 1920, 1080, 30, 4000, 1.5, RateControl.CBR, 2.5, FocusMode.INFINITY, false),
+        video = VideoSettings("2", VideoCodec.H264, 1920, 1080, 30, 4000, 1.5, RateControl.VBR, 2.5, FocusMode.INFINITY, false, OrientationLock.LANDSCAPE),
         audio = AudioSettings(true, 128, 44100, 2),
-        metadata = MetadataSettings(5.0, setOf(13, 14, 15), "M1", "Drone", "IR", "SPARROW1", 12.5, 18, KlvCarriage.ASYNC),
+        metadata = MetadataSettings(5.0, setOf(13, 14, 15), "M1", "Drone", "IR", "SPARROW1", 12.5, 3.5, 18, KlvCarriage.ASYNC),
+        detection = DetectionSettings(true, 8.0, 0.35, setOf(1, 3), false),
         advanced = AdvancedSettings(false, 300, 5000, 150, true),
     )
 
@@ -38,8 +41,8 @@ class ProfileMapperTest {
     fun unsetEnumsMapToDefaults() {
         val p = ProfileMapper.fromProto(PbProfile.getDefaultInstance())
         assertEquals(SrtMode.CALLER, p.destination.mode)
-        assertEquals(VideoCodec.H264, p.video.codec)
-        assertEquals(RateControl.VBR, p.video.rateControl)
+        assertEquals(VideoCodec.H265, p.video.codec)
+        assertEquals(RateControl.CBR, p.video.rateControl)
         assertEquals(FocusMode.CONTINUOUS, p.video.focus)
         assertEquals(KlvCarriage.SYNC, p.metadata.carriage)
         assertEquals(null, p.video.cameraId)
@@ -49,17 +52,18 @@ class ProfileMapperTest {
     @Test
     fun mapperCoversEveryField() {
         fun fields(c: Class<*>) = c.declaredFields.filterNot { Modifier.isStatic(it.modifiers) }.map { it.name }.toSet()
-        assertEquals(setOf("id", "name", "destination", "video", "audio", "metadata", "advanced", "managed"), fields(Profile::class.java))
+        assertEquals(setOf("id", "name", "destination", "video", "audio", "metadata", "detection", "advanced", "managed"), fields(Profile::class.java))
         assertEquals(setOf("mode", "host", "port", "streamId", "latencyMs", "passphrase", "keyLength"), fields(Destination::class.java))
         assertEquals(
-            setOf("cameraId", "codec", "width", "height", "fps", "bitrateKbps", "gopSeconds", "rateControl", "zoomRatio", "focus", "stabilization"),
+            setOf("cameraId", "codec", "width", "height", "fps", "bitrateKbps", "gopSeconds", "rateControl", "zoomRatio", "focus", "stabilization", "orientation"),
             fields(VideoSettings::class.java),
         )
         assertEquals(setOf("enabled", "bitrateKbps", "sampleRate", "channels"), fields(AudioSettings::class.java))
         assertEquals(
-            setOf("rateHz", "enabledTags", "missionId", "platformDesignation", "imageSourceSensor", "callSign", "groundElevationM", "lsVersion", "carriage"),
+            setOf("rateHz", "enabledTags", "missionId", "platformDesignation", "imageSourceSensor", "callSign", "groundElevationM", "headingOffsetDeg", "lsVersion", "carriage"),
             fields(MetadataSettings::class.java),
         )
+        assertEquals(setOf("enabled", "rateHz", "minConfidence", "classes", "sendVmti"), fields(DetectionSettings::class.java))
         assertEquals(setOf("adaptiveBitrate", "minBitrateKbps", "maxBitrateKbps", "ptsDelayMs", "recordLocally"), fields(AdvancedSettings::class.java))
     }
 }

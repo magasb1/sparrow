@@ -13,7 +13,7 @@ import android.os.SystemClock
 import android.util.Size
 import android.view.Surface
 import app.sparrow.core.config.DetectionSettings
-import app.sparrow.core.cv.RfDetr
+import app.sparrow.core.cv.Yolo
 import app.sparrow.core.cv.TrackedObject
 import app.sparrow.core.cv.Tracker
 import app.sparrow.core.cv.YuvFrame
@@ -24,7 +24,7 @@ import java.nio.FloatBuffer
 data class DetectionStats(val inferenceMs: Long, val rateHz: Double, val detections: Int)
 
 /**
- * Runs RF-DETR Nano on a low-resolution copy of the camera stream (an ImageReader added to the
+ * Runs YOLO26n on a low-resolution copy of the camera stream (an ImageReader added to the
  * capture session) and keeps a tracker of the results. Frames arrive at the camera rate; at most
  * [DetectionSettings.rateHz] are analysed and the rest are dropped unread.
  *
@@ -53,8 +53,8 @@ class DetectionEngine(
     private var env: OrtEnvironment? = null
     private var session: OrtSession? = null
     private var loadFailed = false
-    private val input = FloatArray(3 * RfDetr.INPUT_SIZE * RfDetr.INPUT_SIZE)
-    /** Reused native input buffer; a heap buffer would make ONNX Runtime allocate 1.7 MB per run. */
+    private val input = FloatArray(3 * Yolo.INPUT_SIZE * Yolo.INPUT_SIZE)
+    /** Reused native input buffer; a heap buffer would make ONNX Runtime allocate 3 MB per run. */
     private val tensorBuffer: FloatBuffer = java.nio.ByteBuffer.allocateDirect(4 * input.size)
         .order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer()
     private var frame: YuvFrame? = null
@@ -107,19 +107,18 @@ class DetectionEngine(
         val s = session ?: load() ?: return
         val t0 = SystemClock.elapsedRealtime()
         try {
-            RfDetr.preprocess(f, rotationDeg, input)
+            val lb = Yolo.preprocess(f, rotationDeg, input)
             tensorBuffer.clear()
             tensorBuffer.put(input)
             tensorBuffer.flip()
             preMs = SystemClock.elapsedRealtime() - t0
-            val n = RfDetr.INPUT_SIZE.toLong()
+            val n = Yolo.INPUT_SIZE.toLong()
             OnnxTensor.createTensor(env, tensorBuffer, longArrayOf(1, 3, n, n)).use { tensor ->
                 val t1 = SystemClock.elapsedRealtime()
-                s.run(mapOf(RfDetr.INPUT_NAME to tensor)).use { out ->
+                s.run(mapOf(Yolo.INPUT_NAME to tensor)).use { out ->
                     runMs = SystemClock.elapsedRealtime() - t1
-                    val boxes = (out.get(RfDetr.BOXES_OUTPUT).get() as OnnxTensor).floatBuffer.toArray()
-                    val logits = (out.get(RfDetr.LOGITS_OUTPUT).get() as OnnxTensor).floatBuffer.toArray()
-                    val detections = RfDetr.postprocess(boxes, logits, LOW_SCORE, settings.classes)
+                    val rows = (out.get(Yolo.OUTPUT_NAME).get() as OnnxTensor).floatBuffer.toArray()
+                    val detections = Yolo.postprocess(rows, lb, LOW_SCORE, settings.classes)
                     if (enabled) tracker.update(detections, captureUs)
                 }
             }
@@ -144,18 +143,17 @@ class DetectionEngine(
         val t0 = SystemClock.elapsedRealtime()
         return try {
             val e = OrtEnvironment.getEnvironment()
-            val model = context.assets.open(RfDetr.ASSET).use { it.readBytes() }
-            // CPU provider only, on the four big cores. Measured on a Galaxy A55 (Exynos 1480):
-            // XNNPACK makes every pairing slower (it takes 9 convolutions and the partition copies
-            // cost more), the fp32 model is slower than this dynamic-INT8 one, and spinning
-            // workers beat sleeping ones for the 1 800 small ops of the transformer.
+            val model = context.assets.open(Yolo.ASSET).use { it.readBytes() }
+            // CPU provider (MLAS NCHWc convolutions) on the four big cores, workers spinning.
+            // ponytail: XNNPACK not yet measured with YOLO26 (it lost for the old RF-DETR
+            // transformer); A/B it on a device before adding it.
             val s = e.createSession(model, OrtSession.SessionOptions().apply {
                 setIntraOpNumThreads(4)
                 setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
             })
             env = e
             session = s
-            AppLog.i("RF-DETR Nano loaded in ${SystemClock.elapsedRealtime() - t0} ms")
+            AppLog.i("YOLO26n loaded in ${SystemClock.elapsedRealtime() - t0} ms")
             s
         } catch (e: Exception) {
             AppLog.e("Could not load the detection model", e)

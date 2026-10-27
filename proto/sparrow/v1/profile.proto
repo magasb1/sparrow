@@ -16,6 +16,8 @@ message Profile {
   AudioSettings audio = 5;
   MetadataSettings metadata = 6;
   AdvancedSettings advanced = 7;
+  // Unset = detection off with the phone's defaults.
+  DetectionSettings detection = 8;
 }
 
 enum SrtMode {
@@ -48,6 +50,12 @@ enum RateControl {
   RATE_CONTROL_CBR = 2;
 }
 
+enum OrientationLock {
+  ORIENTATION_LOCK_UNSPECIFIED = 0; // auto
+  ORIENTATION_LOCK_PORTRAIT = 1;
+  ORIENTATION_LOCK_LANDSCAPE = 2;
+}
+
 enum FocusMode {
   FOCUS_MODE_UNSPECIFIED = 0;
   FOCUS_MODE_CONTINUOUS = 1;
@@ -67,6 +75,7 @@ message VideoSettings {
   double zoom_ratio = 9;
   FocusMode focus = 10;
   bool stabilization = 11;
+  OrientationLock orientation = 12;
 }
 
 message AudioSettings {
@@ -93,6 +102,18 @@ message MetadataSettings {
   double ground_elevation_m = 7;
   uint32 ls_version = 8;
   KlvCarriage carriage = 9;
+  // Added to the compass heading, degrees clockwise.
+  double heading_offset_deg = 10;
+}
+
+message DetectionSettings {
+  bool enabled = 1;
+  double rate_hz = 2;
+  double min_confidence = 3;
+  // COCO category ids to detect.
+  repeated uint32 classes = 4;
+  // Send tracks as ST 0903 VMTI in ST 0601 tag 74.
+  bool send_vmti = 5;
 }
 
 message AdvancedSettings {

@@ -17,7 +17,7 @@ kotlin {
 dependencies {
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
-    // Runs the shipped RF-DETR model in a JVM test with the app's own pre/post-processing.
+    // Runs the shipped YOLO26 model in a JVM test with the app's own pre/post-processing.
     testImplementation(libs.onnxruntime.jvm)
 }
 

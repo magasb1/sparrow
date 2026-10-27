@@ -31,7 +31,7 @@ data class VmtiFrame(
     /** Targets detected in this frame, including any not reported. */
     val totalTargets: Int,
     val targets: List<VmtiTarget>,
-    val systemName: String = "Sparrow RF-DETR",
+    val systemName: String = "Sparrow YOLO26",
     val sourceSensor: String = "EO",
 )
 

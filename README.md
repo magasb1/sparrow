@@ -55,8 +55,9 @@ to zoom.
 
 Optional, per profile, and switchable live with the target button on the viewfinder.
 
-* **Model:** [RF-DETR Nano](https://github.com/roboflow/rf-detr) (Apache-2.0), exported to ONNX and
-  INT8-quantised (34 MB, `tools/export_rfdetr.py`), run with ONNX Runtime (XNNPACK) on the phone.
+* **Model:** [YOLO26n](https://github.com/ultralytics/ultralytics) (AGPL-3.0), exported to ONNX at
+  512×512 with its NMS-free head (9 MB, `tools/export_yolo26.py`), run with ONNX Runtime (CPU
+  provider) on the phone.
   Nothing leaves the device but the stream.
 * **Input:** a third, low-resolution YUV stream from the camera (same field of view as the video),
   rotated into the stream's orientation, analysed at 2–8 Hz.
@@ -66,7 +67,7 @@ Optional, per profile, and switchable live with the target button on the viewfin
   GNSS and attitude allow.
 * **Default classes:** people, bicycles, cars, motorcycles, aircraft, buses, trains, trucks, boats.
 
-`RfDetrModelTest` runs the shipped model in a JVM test with the app's own Kotlin pre- and
+`YoloModelTest` runs the shipped model in a JVM test with the app's own Kotlin pre- and
 post-processing (ARGB and YUV paths, plus the portrait rotation) on COCO images.
 
 ## Layout
@@ -131,10 +132,10 @@ Tuned for the lowest bandwidth that still gives a clean picture:
 
 | Setting | Default | Why |
 | --- | --- | --- |
-| Video | 1280×720, 15 fps, H.264 High profile | Half the frames of 30 fps; High profile needs ~10–15% fewer bits than Baseline |
-| Bitrate | 1.2 Mbit/s, variable (VBR) | VBR saves bits on static scenes and spends them on motion |
+| Video | 1280×720, 15 fps, H.265 (HEVC) Main | Half the frames of 30 fps; HEVC needs about a third fewer bits than H.264 High (falls back to H.264 on phones without an HEVC encoder) |
+| Bitrate | 1 Mbit/s, constant (CBR) | Receivers want a steady rate; the camera's high-quality noise reduction keeps sensor noise from eating it |
 | Keyframe interval | 2 s | Keyframes are the costliest frames; receivers still start at once because every SRT connect requests an IDR |
-| Adaptive bitrate | 400–1200 kbit/s | Only lowers the bitrate under congestion, never raises it above the target |
+| Adaptive bitrate | 400–1000 kbit/s | Only lowers the bitrate under congestion, never raises it above the target |
 | Metadata | ST 0601 at 10 Hz | About 30 kbit/s with TS overhead |
 | Audio | Off | |
 

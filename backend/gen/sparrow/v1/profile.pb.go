@@ -168,6 +168,55 @@ func (RateControl) EnumDescriptor() ([]byte, []int) {
 	return file_sparrow_v1_profile_proto_rawDescGZIP(), []int{2}
 }
 
+type OrientationLock int32
+
+const (
+	OrientationLock_ORIENTATION_LOCK_UNSPECIFIED OrientationLock = 0 // auto
+	OrientationLock_ORIENTATION_LOCK_PORTRAIT    OrientationLock = 1
+	OrientationLock_ORIENTATION_LOCK_LANDSCAPE   OrientationLock = 2
+)
+
+// Enum value maps for OrientationLock.
+var (
+	OrientationLock_name = map[int32]string{
+		0: "ORIENTATION_LOCK_UNSPECIFIED",
+		1: "ORIENTATION_LOCK_PORTRAIT",
+		2: "ORIENTATION_LOCK_LANDSCAPE",
+	}
+	OrientationLock_value = map[string]int32{
+		"ORIENTATION_LOCK_UNSPECIFIED": 0,
+		"ORIENTATION_LOCK_PORTRAIT":    1,
+		"ORIENTATION_LOCK_LANDSCAPE":   2,
+	}
+)
+
+func (x OrientationLock) Enum() *OrientationLock {
+	p := new(OrientationLock)
+	*p = x
+	return p
+}
+
+func (x OrientationLock) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (OrientationLock) Descriptor() protoreflect.EnumDescriptor {
+	return file_sparrow_v1_profile_proto_enumTypes[3].Descriptor()
+}
+
+func (OrientationLock) Type() protoreflect.EnumType {
+	return &file_sparrow_v1_profile_proto_enumTypes[3]
+}
+
+func (x OrientationLock) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use OrientationLock.Descriptor instead.
+func (OrientationLock) EnumDescriptor() ([]byte, []int) {
+	return file_sparrow_v1_profile_proto_rawDescGZIP(), []int{3}
+}
+
 type FocusMode int32
 
 const (
@@ -201,11 +250,11 @@ func (x FocusMode) String() string {
 }
 
 func (FocusMode) Descriptor() protoreflect.EnumDescriptor {
-	return file_sparrow_v1_profile_proto_enumTypes[3].Descriptor()
+	return file_sparrow_v1_profile_proto_enumTypes[4].Descriptor()
 }
 
 func (FocusMode) Type() protoreflect.EnumType {
-	return &file_sparrow_v1_profile_proto_enumTypes[3]
+	return &file_sparrow_v1_profile_proto_enumTypes[4]
 }
 
 func (x FocusMode) Number() protoreflect.EnumNumber {
@@ -214,7 +263,7 @@ func (x FocusMode) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use FocusMode.Descriptor instead.
 func (FocusMode) EnumDescriptor() ([]byte, []int) {
-	return file_sparrow_v1_profile_proto_rawDescGZIP(), []int{3}
+	return file_sparrow_v1_profile_proto_rawDescGZIP(), []int{4}
 }
 
 type KlvCarriage int32
@@ -250,11 +299,11 @@ func (x KlvCarriage) String() string {
 }
 
 func (KlvCarriage) Descriptor() protoreflect.EnumDescriptor {
-	return file_sparrow_v1_profile_proto_enumTypes[4].Descriptor()
+	return file_sparrow_v1_profile_proto_enumTypes[5].Descriptor()
 }
 
 func (KlvCarriage) Type() protoreflect.EnumType {
-	return &file_sparrow_v1_profile_proto_enumTypes[4]
+	return &file_sparrow_v1_profile_proto_enumTypes[5]
 }
 
 func (x KlvCarriage) Number() protoreflect.EnumNumber {
@@ -263,20 +312,22 @@ func (x KlvCarriage) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use KlvCarriage.Descriptor instead.
 func (KlvCarriage) EnumDescriptor() ([]byte, []int) {
-	return file_sparrow_v1_profile_proto_rawDescGZIP(), []int{4}
+	return file_sparrow_v1_profile_proto_rawDescGZIP(), []int{5}
 }
 
 // Mirrors app.sparrow.core.config.Profile field for field. Enum value 0 means "not set" and maps
 // to the Kotlin default.
 type Profile struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Destination   *Destination           `protobuf:"bytes,3,opt,name=destination,proto3" json:"destination,omitempty"`
-	Video         *VideoSettings         `protobuf:"bytes,4,opt,name=video,proto3" json:"video,omitempty"`
-	Audio         *AudioSettings         `protobuf:"bytes,5,opt,name=audio,proto3" json:"audio,omitempty"`
-	Metadata      *MetadataSettings      `protobuf:"bytes,6,opt,name=metadata,proto3" json:"metadata,omitempty"`
-	Advanced      *AdvancedSettings      `protobuf:"bytes,7,opt,name=advanced,proto3" json:"advanced,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Id          string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name        string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Destination *Destination           `protobuf:"bytes,3,opt,name=destination,proto3" json:"destination,omitempty"`
+	Video       *VideoSettings         `protobuf:"bytes,4,opt,name=video,proto3" json:"video,omitempty"`
+	Audio       *AudioSettings         `protobuf:"bytes,5,opt,name=audio,proto3" json:"audio,omitempty"`
+	Metadata    *MetadataSettings      `protobuf:"bytes,6,opt,name=metadata,proto3" json:"metadata,omitempty"`
+	Advanced    *AdvancedSettings      `protobuf:"bytes,7,opt,name=advanced,proto3" json:"advanced,omitempty"`
+	// Unset = detection off with the phone's defaults.
+	Detection     *DetectionSettings `protobuf:"bytes,8,opt,name=detection,proto3" json:"detection,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -356,6 +407,13 @@ func (x *Profile) GetMetadata() *MetadataSettings {
 func (x *Profile) GetAdvanced() *AdvancedSettings {
 	if x != nil {
 		return x.Advanced
+	}
+	return nil
+}
+
+func (x *Profile) GetDetection() *DetectionSettings {
+	if x != nil {
+		return x.Detection
 	}
 	return nil
 }
@@ -457,17 +515,18 @@ func (x *Destination) GetKeyLength() uint32 {
 type VideoSettings struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Camera2 id; unset = first back camera.
-	CameraId      *string     `protobuf:"bytes,1,opt,name=camera_id,json=cameraId,proto3,oneof" json:"camera_id,omitempty"`
-	Codec         VideoCodec  `protobuf:"varint,2,opt,name=codec,proto3,enum=sparrow.v1.VideoCodec" json:"codec,omitempty"`
-	Width         uint32      `protobuf:"varint,3,opt,name=width,proto3" json:"width,omitempty"`
-	Height        uint32      `protobuf:"varint,4,opt,name=height,proto3" json:"height,omitempty"`
-	Fps           uint32      `protobuf:"varint,5,opt,name=fps,proto3" json:"fps,omitempty"`
-	BitrateKbps   uint32      `protobuf:"varint,6,opt,name=bitrate_kbps,json=bitrateKbps,proto3" json:"bitrate_kbps,omitempty"`
-	GopSeconds    float64     `protobuf:"fixed64,7,opt,name=gop_seconds,json=gopSeconds,proto3" json:"gop_seconds,omitempty"`
-	RateControl   RateControl `protobuf:"varint,8,opt,name=rate_control,json=rateControl,proto3,enum=sparrow.v1.RateControl" json:"rate_control,omitempty"`
-	ZoomRatio     float64     `protobuf:"fixed64,9,opt,name=zoom_ratio,json=zoomRatio,proto3" json:"zoom_ratio,omitempty"`
-	Focus         FocusMode   `protobuf:"varint,10,opt,name=focus,proto3,enum=sparrow.v1.FocusMode" json:"focus,omitempty"`
-	Stabilization bool        `protobuf:"varint,11,opt,name=stabilization,proto3" json:"stabilization,omitempty"`
+	CameraId      *string         `protobuf:"bytes,1,opt,name=camera_id,json=cameraId,proto3,oneof" json:"camera_id,omitempty"`
+	Codec         VideoCodec      `protobuf:"varint,2,opt,name=codec,proto3,enum=sparrow.v1.VideoCodec" json:"codec,omitempty"`
+	Width         uint32          `protobuf:"varint,3,opt,name=width,proto3" json:"width,omitempty"`
+	Height        uint32          `protobuf:"varint,4,opt,name=height,proto3" json:"height,omitempty"`
+	Fps           uint32          `protobuf:"varint,5,opt,name=fps,proto3" json:"fps,omitempty"`
+	BitrateKbps   uint32          `protobuf:"varint,6,opt,name=bitrate_kbps,json=bitrateKbps,proto3" json:"bitrate_kbps,omitempty"`
+	GopSeconds    float64         `protobuf:"fixed64,7,opt,name=gop_seconds,json=gopSeconds,proto3" json:"gop_seconds,omitempty"`
+	RateControl   RateControl     `protobuf:"varint,8,opt,name=rate_control,json=rateControl,proto3,enum=sparrow.v1.RateControl" json:"rate_control,omitempty"`
+	ZoomRatio     float64         `protobuf:"fixed64,9,opt,name=zoom_ratio,json=zoomRatio,proto3" json:"zoom_ratio,omitempty"`
+	Focus         FocusMode       `protobuf:"varint,10,opt,name=focus,proto3,enum=sparrow.v1.FocusMode" json:"focus,omitempty"`
+	Stabilization bool            `protobuf:"varint,11,opt,name=stabilization,proto3" json:"stabilization,omitempty"`
+	Orientation   OrientationLock `protobuf:"varint,12,opt,name=orientation,proto3,enum=sparrow.v1.OrientationLock" json:"orientation,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -579,6 +638,13 @@ func (x *VideoSettings) GetStabilization() bool {
 	return false
 }
 
+func (x *VideoSettings) GetOrientation() OrientationLock {
+	if x != nil {
+		return x.Orientation
+	}
+	return OrientationLock_ORIENTATION_LOCK_UNSPECIFIED
+}
+
 type AudioSettings struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
@@ -659,8 +725,10 @@ type MetadataSettings struct {
 	GroundElevationM    float64     `protobuf:"fixed64,7,opt,name=ground_elevation_m,json=groundElevationM,proto3" json:"ground_elevation_m,omitempty"`
 	LsVersion           uint32      `protobuf:"varint,8,opt,name=ls_version,json=lsVersion,proto3" json:"ls_version,omitempty"`
 	Carriage            KlvCarriage `protobuf:"varint,9,opt,name=carriage,proto3,enum=sparrow.v1.KlvCarriage" json:"carriage,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Added to the compass heading, degrees clockwise.
+	HeadingOffsetDeg float64 `protobuf:"fixed64,10,opt,name=heading_offset_deg,json=headingOffsetDeg,proto3" json:"heading_offset_deg,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *MetadataSettings) Reset() {
@@ -756,6 +824,91 @@ func (x *MetadataSettings) GetCarriage() KlvCarriage {
 	return KlvCarriage_KLV_CARRIAGE_UNSPECIFIED
 }
 
+func (x *MetadataSettings) GetHeadingOffsetDeg() float64 {
+	if x != nil {
+		return x.HeadingOffsetDeg
+	}
+	return 0
+}
+
+type DetectionSettings struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	RateHz        float64                `protobuf:"fixed64,2,opt,name=rate_hz,json=rateHz,proto3" json:"rate_hz,omitempty"`
+	MinConfidence float64                `protobuf:"fixed64,3,opt,name=min_confidence,json=minConfidence,proto3" json:"min_confidence,omitempty"`
+	// COCO category ids to detect.
+	Classes []uint32 `protobuf:"varint,4,rep,packed,name=classes,proto3" json:"classes,omitempty"`
+	// Send tracks as ST 0903 VMTI in ST 0601 tag 74.
+	SendVmti      bool `protobuf:"varint,5,opt,name=send_vmti,json=sendVmti,proto3" json:"send_vmti,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DetectionSettings) Reset() {
+	*x = DetectionSettings{}
+	mi := &file_sparrow_v1_profile_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DetectionSettings) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DetectionSettings) ProtoMessage() {}
+
+func (x *DetectionSettings) ProtoReflect() protoreflect.Message {
+	mi := &file_sparrow_v1_profile_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DetectionSettings.ProtoReflect.Descriptor instead.
+func (*DetectionSettings) Descriptor() ([]byte, []int) {
+	return file_sparrow_v1_profile_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *DetectionSettings) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *DetectionSettings) GetRateHz() float64 {
+	if x != nil {
+		return x.RateHz
+	}
+	return 0
+}
+
+func (x *DetectionSettings) GetMinConfidence() float64 {
+	if x != nil {
+		return x.MinConfidence
+	}
+	return 0
+}
+
+func (x *DetectionSettings) GetClasses() []uint32 {
+	if x != nil {
+		return x.Classes
+	}
+	return nil
+}
+
+func (x *DetectionSettings) GetSendVmti() bool {
+	if x != nil {
+		return x.SendVmti
+	}
+	return false
+}
+
 type AdvancedSettings struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	AdaptiveBitrate bool                   `protobuf:"varint,1,opt,name=adaptive_bitrate,json=adaptiveBitrate,proto3" json:"adaptive_bitrate,omitempty"`
@@ -769,7 +922,7 @@ type AdvancedSettings struct {
 
 func (x *AdvancedSettings) Reset() {
 	*x = AdvancedSettings{}
-	mi := &file_sparrow_v1_profile_proto_msgTypes[5]
+	mi := &file_sparrow_v1_profile_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -781,7 +934,7 @@ func (x *AdvancedSettings) String() string {
 func (*AdvancedSettings) ProtoMessage() {}
 
 func (x *AdvancedSettings) ProtoReflect() protoreflect.Message {
-	mi := &file_sparrow_v1_profile_proto_msgTypes[5]
+	mi := &file_sparrow_v1_profile_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -794,7 +947,7 @@ func (x *AdvancedSettings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdvancedSettings.ProtoReflect.Descriptor instead.
 func (*AdvancedSettings) Descriptor() ([]byte, []int) {
-	return file_sparrow_v1_profile_proto_rawDescGZIP(), []int{5}
+	return file_sparrow_v1_profile_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *AdvancedSettings) GetAdaptiveBitrate() bool {
@@ -837,7 +990,7 @@ var File_sparrow_v1_profile_proto protoreflect.FileDescriptor
 const file_sparrow_v1_profile_proto_rawDesc = "" +
 	"\n" +
 	"\x18sparrow/v1/profile.proto\x12\n" +
-	"sparrow.v1\"\xbe\x02\n" +
+	"sparrow.v1\"\xfb\x02\n" +
 	"\aProfile\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x129\n" +
@@ -845,7 +998,8 @@ const file_sparrow_v1_profile_proto_rawDesc = "" +
 	"\x05video\x18\x04 \x01(\v2\x19.sparrow.v1.VideoSettingsR\x05video\x12/\n" +
 	"\x05audio\x18\x05 \x01(\v2\x19.sparrow.v1.AudioSettingsR\x05audio\x128\n" +
 	"\bmetadata\x18\x06 \x01(\v2\x1c.sparrow.v1.MetadataSettingsR\bmetadata\x128\n" +
-	"\badvanced\x18\a \x01(\v2\x1c.sparrow.v1.AdvancedSettingsR\badvanced\"\xd9\x01\n" +
+	"\badvanced\x18\a \x01(\v2\x1c.sparrow.v1.AdvancedSettingsR\badvanced\x12;\n" +
+	"\tdetection\x18\b \x01(\v2\x1d.sparrow.v1.DetectionSettingsR\tdetection\"\xd9\x01\n" +
 	"\vDestination\x12'\n" +
 	"\x04mode\x18\x01 \x01(\x0e2\x13.sparrow.v1.SrtModeR\x04mode\x12\x12\n" +
 	"\x04host\x18\x02 \x01(\tR\x04host\x12\x12\n" +
@@ -857,7 +1011,7 @@ const file_sparrow_v1_profile_proto_rawDesc = "" +
 	"passphrase\x18\x06 \x01(\tR\n" +
 	"passphrase\x12\x1d\n" +
 	"\n" +
-	"key_length\x18\a \x01(\rR\tkeyLength\"\x9f\x03\n" +
+	"key_length\x18\a \x01(\rR\tkeyLength\"\xde\x03\n" +
 	"\rVideoSettings\x12 \n" +
 	"\tcamera_id\x18\x01 \x01(\tH\x00R\bcameraId\x88\x01\x01\x12,\n" +
 	"\x05codec\x18\x02 \x01(\x0e2\x16.sparrow.v1.VideoCodecR\x05codec\x12\x14\n" +
@@ -872,7 +1026,8 @@ const file_sparrow_v1_profile_proto_rawDesc = "" +
 	"zoom_ratio\x18\t \x01(\x01R\tzoomRatio\x12+\n" +
 	"\x05focus\x18\n" +
 	" \x01(\x0e2\x15.sparrow.v1.FocusModeR\x05focus\x12$\n" +
-	"\rstabilization\x18\v \x01(\bR\rstabilizationB\f\n" +
+	"\rstabilization\x18\v \x01(\bR\rstabilization\x12=\n" +
+	"\vorientation\x18\f \x01(\x0e2\x1b.sparrow.v1.OrientationLockR\vorientationB\f\n" +
 	"\n" +
 	"_camera_id\"\x89\x01\n" +
 	"\rAudioSettings\x12\x18\n" +
@@ -880,7 +1035,7 @@ const file_sparrow_v1_profile_proto_rawDesc = "" +
 	"\fbitrate_kbps\x18\x02 \x01(\rR\vbitrateKbps\x12\x1f\n" +
 	"\vsample_rate\x18\x03 \x01(\rR\n" +
 	"sampleRate\x12\x1a\n" +
-	"\bchannels\x18\x04 \x01(\rR\bchannels\"\xef\x02\n" +
+	"\bchannels\x18\x04 \x01(\rR\bchannels\"\x9d\x03\n" +
 	"\x10MetadataSettings\x12\x17\n" +
 	"\arate_hz\x18\x01 \x01(\x01R\x06rateHz\x12!\n" +
 	"\fenabled_tags\x18\x02 \x03(\rR\venabledTags\x12\x1d\n" +
@@ -892,7 +1047,15 @@ const file_sparrow_v1_profile_proto_rawDesc = "" +
 	"\x12ground_elevation_m\x18\a \x01(\x01R\x10groundElevationM\x12\x1d\n" +
 	"\n" +
 	"ls_version\x18\b \x01(\rR\tlsVersion\x123\n" +
-	"\bcarriage\x18\t \x01(\x0e2\x17.sparrow.v1.KlvCarriageR\bcarriage\"\xda\x01\n" +
+	"\bcarriage\x18\t \x01(\x0e2\x17.sparrow.v1.KlvCarriageR\bcarriage\x12,\n" +
+	"\x12heading_offset_deg\x18\n" +
+	" \x01(\x01R\x10headingOffsetDeg\"\xa4\x01\n" +
+	"\x11DetectionSettings\x12\x18\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x17\n" +
+	"\arate_hz\x18\x02 \x01(\x01R\x06rateHz\x12%\n" +
+	"\x0emin_confidence\x18\x03 \x01(\x01R\rminConfidence\x12\x18\n" +
+	"\aclasses\x18\x04 \x03(\rR\aclasses\x12\x1b\n" +
+	"\tsend_vmti\x18\x05 \x01(\bR\bsendVmti\"\xda\x01\n" +
 	"\x10AdvancedSettings\x12)\n" +
 	"\x10adaptive_bitrate\x18\x01 \x01(\bR\x0fadaptiveBitrate\x12(\n" +
 	"\x10min_bitrate_kbps\x18\x02 \x01(\rR\x0eminBitrateKbps\x12(\n" +
@@ -912,7 +1075,11 @@ const file_sparrow_v1_profile_proto_rawDesc = "" +
 	"\vRateControl\x12\x1c\n" +
 	"\x18RATE_CONTROL_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10RATE_CONTROL_VBR\x10\x01\x12\x14\n" +
-	"\x10RATE_CONTROL_CBR\x10\x02*[\n" +
+	"\x10RATE_CONTROL_CBR\x10\x02*r\n" +
+	"\x0fOrientationLock\x12 \n" +
+	"\x1cORIENTATION_LOCK_UNSPECIFIED\x10\x00\x12\x1d\n" +
+	"\x19ORIENTATION_LOCK_PORTRAIT\x10\x01\x12\x1e\n" +
+	"\x1aORIENTATION_LOCK_LANDSCAPE\x10\x02*[\n" +
 	"\tFocusMode\x12\x1a\n" +
 	"\x16FOCUS_MODE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15FOCUS_MODE_CONTINUOUS\x10\x01\x12\x17\n" +
@@ -935,37 +1102,41 @@ func file_sparrow_v1_profile_proto_rawDescGZIP() []byte {
 	return file_sparrow_v1_profile_proto_rawDescData
 }
 
-var file_sparrow_v1_profile_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_sparrow_v1_profile_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_sparrow_v1_profile_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
+var file_sparrow_v1_profile_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_sparrow_v1_profile_proto_goTypes = []any{
-	(SrtMode)(0),             // 0: sparrow.v1.SrtMode
-	(VideoCodec)(0),          // 1: sparrow.v1.VideoCodec
-	(RateControl)(0),         // 2: sparrow.v1.RateControl
-	(FocusMode)(0),           // 3: sparrow.v1.FocusMode
-	(KlvCarriage)(0),         // 4: sparrow.v1.KlvCarriage
-	(*Profile)(nil),          // 5: sparrow.v1.Profile
-	(*Destination)(nil),      // 6: sparrow.v1.Destination
-	(*VideoSettings)(nil),    // 7: sparrow.v1.VideoSettings
-	(*AudioSettings)(nil),    // 8: sparrow.v1.AudioSettings
-	(*MetadataSettings)(nil), // 9: sparrow.v1.MetadataSettings
-	(*AdvancedSettings)(nil), // 10: sparrow.v1.AdvancedSettings
+	(SrtMode)(0),              // 0: sparrow.v1.SrtMode
+	(VideoCodec)(0),           // 1: sparrow.v1.VideoCodec
+	(RateControl)(0),          // 2: sparrow.v1.RateControl
+	(OrientationLock)(0),      // 3: sparrow.v1.OrientationLock
+	(FocusMode)(0),            // 4: sparrow.v1.FocusMode
+	(KlvCarriage)(0),          // 5: sparrow.v1.KlvCarriage
+	(*Profile)(nil),           // 6: sparrow.v1.Profile
+	(*Destination)(nil),       // 7: sparrow.v1.Destination
+	(*VideoSettings)(nil),     // 8: sparrow.v1.VideoSettings
+	(*AudioSettings)(nil),     // 9: sparrow.v1.AudioSettings
+	(*MetadataSettings)(nil),  // 10: sparrow.v1.MetadataSettings
+	(*DetectionSettings)(nil), // 11: sparrow.v1.DetectionSettings
+	(*AdvancedSettings)(nil),  // 12: sparrow.v1.AdvancedSettings
 }
 var file_sparrow_v1_profile_proto_depIdxs = []int32{
-	6,  // 0: sparrow.v1.Profile.destination:type_name -> sparrow.v1.Destination
-	7,  // 1: sparrow.v1.Profile.video:type_name -> sparrow.v1.VideoSettings
-	8,  // 2: sparrow.v1.Profile.audio:type_name -> sparrow.v1.AudioSettings
-	9,  // 3: sparrow.v1.Profile.metadata:type_name -> sparrow.v1.MetadataSettings
-	10, // 4: sparrow.v1.Profile.advanced:type_name -> sparrow.v1.AdvancedSettings
-	0,  // 5: sparrow.v1.Destination.mode:type_name -> sparrow.v1.SrtMode
-	1,  // 6: sparrow.v1.VideoSettings.codec:type_name -> sparrow.v1.VideoCodec
-	2,  // 7: sparrow.v1.VideoSettings.rate_control:type_name -> sparrow.v1.RateControl
-	3,  // 8: sparrow.v1.VideoSettings.focus:type_name -> sparrow.v1.FocusMode
-	4,  // 9: sparrow.v1.MetadataSettings.carriage:type_name -> sparrow.v1.KlvCarriage
-	10, // [10:10] is the sub-list for method output_type
-	10, // [10:10] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	7,  // 0: sparrow.v1.Profile.destination:type_name -> sparrow.v1.Destination
+	8,  // 1: sparrow.v1.Profile.video:type_name -> sparrow.v1.VideoSettings
+	9,  // 2: sparrow.v1.Profile.audio:type_name -> sparrow.v1.AudioSettings
+	10, // 3: sparrow.v1.Profile.metadata:type_name -> sparrow.v1.MetadataSettings
+	12, // 4: sparrow.v1.Profile.advanced:type_name -> sparrow.v1.AdvancedSettings
+	11, // 5: sparrow.v1.Profile.detection:type_name -> sparrow.v1.DetectionSettings
+	0,  // 6: sparrow.v1.Destination.mode:type_name -> sparrow.v1.SrtMode
+	1,  // 7: sparrow.v1.VideoSettings.codec:type_name -> sparrow.v1.VideoCodec
+	2,  // 8: sparrow.v1.VideoSettings.rate_control:type_name -> sparrow.v1.RateControl
+	4,  // 9: sparrow.v1.VideoSettings.focus:type_name -> sparrow.v1.FocusMode
+	3,  // 10: sparrow.v1.VideoSettings.orientation:type_name -> sparrow.v1.OrientationLock
+	5,  // 11: sparrow.v1.MetadataSettings.carriage:type_name -> sparrow.v1.KlvCarriage
+	12, // [12:12] is the sub-list for method output_type
+	12, // [12:12] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_sparrow_v1_profile_proto_init() }
@@ -979,8 +1150,8 @@ func file_sparrow_v1_profile_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sparrow_v1_profile_proto_rawDesc), len(file_sparrow_v1_profile_proto_rawDesc)),
-			NumEnums:      5,
-			NumMessages:   6,
+			NumEnums:      6,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

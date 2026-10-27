@@ -11,7 +11,10 @@ enum class SrtMode { CALLER, LISTENER }
 
 enum class FocusMode { CONTINUOUS, INFINITY }
 
-/** Encoder rate control. VBR spends bits on motion and saves them on static scenes. */
+/** Screen and stream orientation: follow the phone, or hold portrait or landscape (either way up). */
+enum class OrientationLock { AUTO, PORTRAIT, LANDSCAPE }
+
+/** Encoder rate control. CBR (default) keeps SRT bandwidth predictable; VBR spends bits on motion and saves them on static scenes. */
 enum class RateControl { VBR, CBR }
 
 @Serializable
@@ -32,18 +35,20 @@ data class Destination(
 data class VideoSettings(
     /** Camera2 id; null = first back camera. */
     val cameraId: String? = null,
-    val codec: VideoCodec = VideoCodec.H264,
+    /** HEVC needs about a third fewer bits than H.264 for the same picture; the phone falls back to H.264 if it has no HEVC encoder. */
+    val codec: VideoCodec = VideoCodec.H265,
     val width: Int = 1280,
     val height: Int = 720,
-    // Defaults favour low bandwidth: 720p at 15 fps is about 1.2 Mbit/s with H.264 High profile.
+    // Defaults favour low bandwidth: 720p at 15 fps, HEVC at 1 Mbit/s CBR.
     val fps: Int = 15,
-    val bitrateKbps: Int = 1200,
+    val bitrateKbps: Int = 1000,
     /** A receiver joining mid-stream gets an IDR on connect, so a longer GOP costs no join time. */
     val gopSeconds: Double = 2.0,
-    val rateControl: RateControl = RateControl.VBR,
+    val rateControl: RateControl = RateControl.CBR,
     val zoomRatio: Double = 1.0,
     val focus: FocusMode = FocusMode.CONTINUOUS,
     val stabilization: Boolean = true,
+    val orientation: OrientationLock = OrientationLock.AUTO,
 )
 
 @Serializable
@@ -70,7 +75,7 @@ data class MetadataSettings(
     val carriage: KlvCarriage = KlvCarriage.SYNC,
 )
 
-/** On-device object detection (RF-DETR Nano) and ST 0903 VMTI reporting. */
+/** On-device object detection (YOLO26n) and ST 0903 VMTI reporting. */
 @Serializable
 data class DetectionSettings(
     val enabled: Boolean = false,
@@ -88,7 +93,7 @@ data class AdvancedSettings(
     val adaptiveBitrate: Boolean = true,
     val minBitrateKbps: Int = 400,
     /** Equal to the video bitrate by default, so ABR only ever lowers it. */
-    val maxBitrateKbps: Int = 1200,
+    val maxBitrateKbps: Int = 1000,
     val ptsDelayMs: Int = 250,
     val recordLocally: Boolean = false,
 )

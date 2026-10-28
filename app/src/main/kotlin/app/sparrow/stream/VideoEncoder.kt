@@ -25,14 +25,13 @@ class VideoEncoder(
     private val onAccessUnit: (cameraUs: Long, accessUnit: ByteArray, keyFrame: Boolean) -> Unit,
     private val onError: (String) -> Unit,
 ) {
-    val codec: VideoCodec = if (settings.codec == VideoCodec.H265 && !supports(MediaFormat.MIMETYPE_VIDEO_HEVC)) {
-        AppLog.w("No hardware H.265 encoder; using H.264")
-        VideoCodec.H264
-    } else settings.codec
+    val codec: VideoCodec = chooseCodec(settings.codec, size.width, size.height, settings.fps)
+        ?.also { if (it != settings.codec) AppLog.w("No hardware ${settings.codec} encoder for ${size.width}x${size.height} at ${settings.fps} fps; using $it") }
+        ?: error("No hardware encoder for ${size.width}x${size.height} at ${settings.fps} fps")
 
-    private val mime = if (codec == VideoCodec.H265) MediaFormat.MIMETYPE_VIDEO_HEVC else MediaFormat.MIMETYPE_VIDEO_AVC
+    private val mime = mimeOf(codec)
     private val thread = HandlerThread("video-encoder").apply { start() }
-    private val mediaCodec = MediaCodec.createEncoderByType(mime)
+    private val mediaCodec = MediaCodec.createByCodecName(findEncoder(codec, size.width, size.height, settings.fps)!!)
     private val assembler = AccessUnitAssembler(codec)
     lateinit var inputSurface: Surface
         private set
@@ -150,14 +149,28 @@ class VideoEncoder(
     }
 
     companion object {
-        /** True if a hardware encoder for [mime] accepts [width]×[height] (portrait sizes are not universal). */
-        fun supportsSize(mime: String, width: Int, height: Int): Boolean = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
-            info.isEncoder && info.isHardwareAccelerated && info.supportedTypes.any { it.equals(mime, ignoreCase = true) } &&
-                runCatching { info.getCapabilitiesForType(mime).videoCapabilities!!.isSizeSupported(width, height) }.getOrDefault(false)
+        private val hardwareEncoders by lazy {
+            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.filter { it.isEncoder && it.isHardwareAccelerated }
         }
 
-        fun supports(mime: String): Boolean = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
-            info.isEncoder && info.isHardwareAccelerated && info.supportedTypes.any { it.equals(mime, ignoreCase = true) }
+        fun mimeOf(codec: VideoCodec): String =
+            if (codec == VideoCodec.H265) MediaFormat.MIMETYPE_VIDEO_HEVC else MediaFormat.MIMETYPE_VIDEO_AVC
+
+        /**
+         * Name of a hardware encoder for [codec] that accepts [width]×[height] (alignment included)
+         * at [fps], or null. Portrait and 4K sizes are not universal, least of all for HEVC.
+         */
+        fun findEncoder(codec: VideoCodec, width: Int, height: Int, fps: Int): String? {
+            val mime = mimeOf(codec)
+            return hardwareEncoders.firstOrNull { info ->
+                info.supportedTypes.any { it.equals(mime, ignoreCase = true) } && runCatching {
+                    info.getCapabilitiesForType(mime).videoCapabilities!!.areSizeAndRateSupported(width, height, fps.toDouble())
+                }.getOrDefault(false)
+            }?.name
         }
+
+        /** [requested] if a hardware encoder can do the size and rate, else H.264 if one can, else null. */
+        fun chooseCodec(requested: VideoCodec, width: Int, height: Int, fps: Int): VideoCodec? =
+            listOf(requested, VideoCodec.H264).firstOrNull { findEncoder(it, width, height, fps) != null }
     }
 }

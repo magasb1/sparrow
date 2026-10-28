@@ -51,13 +51,17 @@ class StreamPipeline(
             ?: error("No camera available")
     }
     /** Camera buffer size, in sensor (landscape) orientation. */
-    private val cameraSize = CameraInfo.chooseSize(cameraInfo.encoderSizes, profile.video.width, profile.video.height)
+    private val cameraSize = cameraInfo.encoderSizes.let { all ->
+        // Prefer sizes the chosen codec's encoder accepts; otherwise VideoEncoder falls back to H.264.
+        val v = profile.video
+        val encodable = all.filter { VideoEncoder.findEncoder(v.codec, it.width, it.height, v.fps) != null }
+        CameraInfo.chooseSize(encodable.ifEmpty { all }, v.width, v.height)
+    }
     private val sensorAspect = cameraSize.width.toDouble() / cameraSize.height
     private val orientation = StreamOrientation.of(
         cameraInfo.sensorOrientation, displayRotationDeg, cameraInfo.facing, cameraSize.width, cameraSize.height,
     ).let { o ->
-        val mime = if (profile.video.codec == app.sparrow.core.ts.VideoCodec.H265) "video/hevc" else "video/avc"
-        if (o.rotationDeg != 0 && !VideoEncoder.supportsSize(mime, o.width, o.height)) {
+        if (o.rotationDeg != 0 && VideoEncoder.chooseCodec(profile.video.codec, o.width, o.height, profile.video.fps) == null) {
             AppLog.w("Encoder cannot do ${o.width}x${o.height}; streaming in sensor orientation")
             StreamOrientation.of(cameraInfo.sensorOrientation, cameraInfo.sensorOrientation, LensFacing.BACK, cameraSize.width, cameraSize.height)
         } else o

@@ -76,6 +76,14 @@ object StreamController {
     private val _preview = MutableStateFlow<PreviewTarget?>(null)
     val preview: StateFlow<PreviewTarget?> = _preview.asStateFlow()
 
+    private val _armed = MutableStateFlow(false)
+    /** The service is in standby: the backend can start a stream with the app closed. */
+    val armed: StateFlow<Boolean> = _armed.asStateFlow()
+
+    internal fun setArmed(on: Boolean) {
+        _armed.value = on
+    }
+
     private val _zoom = MutableStateFlow<Double?>(null)
     val zoom: StateFlow<Double?> = _zoom.asStateFlow()
 

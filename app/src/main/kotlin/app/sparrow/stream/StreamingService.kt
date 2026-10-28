@@ -33,9 +33,17 @@ import kotlinx.coroutines.launch
 /**
  * Foreground service that owns the streaming pipeline (BG-1..4). It keeps running when the UI is
  * gone or the screen is off, holding a partial wake lock and a low-latency Wi-Fi lock while live.
+ *
+ * Standby (armed): while registered with a backend, the app arms the service whenever it is
+ * visible. It then stays in the foreground with the camera closed, keeps the backend link open,
+ * and can start a stream on a remote command after the app is gone. Android only lets a service
+ * open the camera from the background if it entered the foreground with the camera type while the
+ * app was visible, which is why arming happens from the UI.
  */
 class StreamingService : LifecycleService() {
     private var pipeline: StreamPipeline? = null
+    private var armed = false
+    private var standbyLock: PowerManager.WakeLock? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var wifiHighPerfLock: WifiManager.WifiLock? = null
@@ -56,18 +64,83 @@ class StreamingService : LifecycleService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        when (intent?.action) {
+        handle(intent?.action)
+        return START_STICKY
+    }
+
+    private fun handle(action: String?) {
+        when (action) {
             ACTION_START -> startStreaming()
             ACTION_STOP -> stopStreaming(userRequested = true)
+            ACTION_RESTART -> if (pipeline != null || StreamController.status.value.running) {
+                stopStreaming(userRequested = true, restarting = true)
+                startStreaming()
+            }
+            ACTION_ARM -> arm()
+            ACTION_DISARM -> disarm()
             null -> {
                 // Restarted by the system after the process was killed. Android does not allow
                 // reopening the camera from here, so tell the user instead of pretending (BG-6).
                 AppLog.w("Service restarted after process death")
-                SparrowApp.get(this).notifyInterrupted()
+                val app = SparrowApp.get(this)
+                if (app.interruptedSession) app.notifyInterrupted() else if (BackendSession.state.value.registered) app.notifyRearm()
                 stopSelf()
             }
         }
-        return START_STICKY
+    }
+
+    @SuppressLint("InlinedApi", "WakelockTimeout") // the lock is released on disarm
+    private fun arm() {
+        if (armed) return
+        if (pipeline == null) {
+            try {
+                ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(standby = true), standbyTypes())
+            } catch (e: Exception) {
+                AppLog.e("Could not enter standby", e)
+                stopSelf()
+                return
+            }
+        }
+        armed = true
+        current = this
+        StreamController.setArmed(true)
+        BackendSession.acquire("standby")
+        // Keeps the backend link answering with the screen off, so a remote Start is not delayed
+        // until the phone wakes.
+        standbyLock = getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "sparrow:standby").apply { acquire() }
+        AppLog.i("Standby armed: the backend can start streaming")
+    }
+
+    private fun disarm() {
+        if (!armed) {
+            if (pipeline == null && !StreamController.status.value.running) stopSelf()
+            return
+        }
+        releaseStandby()
+        AppLog.i("Standby disarmed")
+        if (pipeline == null && !StreamController.status.value.running) {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+    }
+
+    private fun releaseStandby() {
+        armed = false
+        if (current === this) current = null
+        StreamController.setArmed(false)
+        BackendSession.release("standby")
+        standbyLock?.takeIf { it.isHeld }?.release()
+        standbyLock = null
+    }
+
+    /** Camera and location, plus the microphone when allowed, so a later stream may use audio. */
+    @SuppressLint("InlinedApi")
+    private fun standbyTypes(): Int {
+        val mic = ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        return ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
+            (if (mic) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
     }
 
     override fun onBind(intent: Intent): IBinder? {
@@ -90,7 +163,9 @@ class StreamingService : LifecycleService() {
             (if (profile.audio.enabled) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
         StreamController.update { it.copy(running = true, link = LinkState.Starting, profileName = profile.name) }
         try {
-            ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), types)
+            // Armed, the service is already in the foreground with the camera type, which is what
+            // lets it open the camera now, possibly from the background.
+            if (armed) updateNotification() else ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), types)
         } catch (e: Exception) {
             AppLog.e("Could not enter foreground", e)
             StreamController.update { it.copy(running = false, link = LinkState.Failed("Could not start: ${e.message}")) }
@@ -174,7 +249,8 @@ class StreamingService : LifecycleService() {
         return (display?.rotation ?: android.view.Surface.ROTATION_0) * 90
     }
 
-    private fun stopStreaming(userRequested: Boolean) {
+    /** Ends the stream. Armed or [restarting], the service stays in the foreground. */
+    private fun stopStreaming(userRequested: Boolean, restarting: Boolean = false) {
         stopping = true
         notificationJob?.cancel()
         previewJob?.cancel()
@@ -191,11 +267,17 @@ class StreamingService : LifecycleService() {
         val failed = StreamController.status.value.link as? LinkState.Failed
         StreamController.reset()
         if (!userRequested && failed != null) StreamController.update { it.copy(link = failed) }
+        if (restarting) return
+        if (armed) {
+            updateNotification()
+            return
+        }
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
     override fun onDestroy() {
+        if (armed) releaseStandby()
         if (!stopping) stopStreaming(userRequested = false)
         super.onDestroy()
     }
@@ -245,7 +327,28 @@ class StreamingService : LifecycleService() {
         networkCallback = null
     }
 
-    private fun buildNotification(): Notification {
+    private fun buildNotification(
+        standby: Boolean = armed && pipeline == null && !StreamController.status.value.running,
+    ): Notification {
+        val open = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
+        )
+        if (standby) {
+            val disarm = PendingIntent.getService(
+                this, 2, Intent(this, StreamingService::class.java).setAction(ACTION_DISARM), PendingIntent.FLAG_IMMUTABLE,
+            )
+            return NotificationCompat.Builder(this, SparrowApp.CHANNEL_STREAM)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("Sparrow · Standby")
+                .setContentText("Can be started remotely from the server")
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+                .setContentIntent(open)
+                .addAction(0, "Disarm", disarm)
+                .build()
+        }
         val s = StreamController.status.value
         val state = when (val l = s.link) {
             LinkState.Live -> "Live"
@@ -255,9 +358,6 @@ class StreamingService : LifecycleService() {
             is LinkState.Failed -> "Failed: ${l.reason}"
             else -> "Starting"
         }
-        val open = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
-        )
         val stop = PendingIntent.getService(
             this, 1, Intent(this, StreamingService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE,
         )
@@ -286,7 +386,13 @@ class StreamingService : LifecycleService() {
     companion object {
         const val ACTION_START = "app.sparrow.START"
         const val ACTION_STOP = "app.sparrow.STOP"
+        const val ACTION_RESTART = "app.sparrow.RESTART"
+        const val ACTION_ARM = "app.sparrow.ARM"
+        const val ACTION_DISARM = "app.sparrow.DISARM"
         private const val NOTIFICATION_ID = 1
+
+        /** The armed service, for remote commands. Main thread only. */
+        private var current: StreamingService? = null
 
         fun start(context: Context) = ContextCompat.startForegroundService(
             context, Intent(context, StreamingService::class.java).setAction(ACTION_START),
@@ -295,5 +401,37 @@ class StreamingService : LifecycleService() {
         fun stop(context: Context) = context.startService(
             Intent(context, StreamingService::class.java).setAction(ACTION_STOP),
         )
+
+        /** Enters standby. Call only while the app is visible (see the class comment). */
+        fun arm(context: Context) {
+            if (!StreamController.armed.value) {
+                ContextCompat.startForegroundService(context, Intent(context, StreamingService::class.java).setAction(ACTION_ARM))
+            }
+        }
+
+        fun disarm(context: Context) {
+            if (StreamController.armed.value) {
+                context.startService(Intent(context, StreamingService::class.java).setAction(ACTION_DISARM))
+            }
+        }
+
+        /**
+         * Runs [action] (start, stop, restart) in the armed service directly, without a new start
+         * request, which Android may refuse from the background. False when not armed.
+         */
+        fun remote(action: String): Boolean {
+            val main = Handler(Looper.getMainLooper())
+            val done = java.util.concurrent.CountDownLatch(1)
+            var sent = false
+            main.post {
+                current?.let {
+                    it.handle(action)
+                    sent = true
+                }
+                done.countDown()
+            }
+            done.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            return sent
+        }
     }
 }

@@ -19,9 +19,16 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import android.content.Intent
 import app.sparrow.SparrowApp
+import app.sparrow.log.AppLog
 import app.sparrow.core.config.OrientationLock
 import app.sparrow.remote.BackendSession
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import app.sparrow.stream.StreamController
 import app.sparrow.stream.StreamingService
 
@@ -36,6 +43,7 @@ class MainActivity : ComponentActivity() {
 
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         refreshPermissions()
+        if (BackendSession.state.value.registered) armStandby()
         if (pendingStart) {
             pendingStart = false
             val denied = result.filterValues { !it }.keys
@@ -112,6 +120,20 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        // Standby whenever the app is on screen and registered, including right after registering.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                BackendSession.state.map { it.registered }.distinctUntilChanged().collect { if (it) armStandby() }
+            }
+        }
+    }
+
+    /** Arms standby when the camera and location are allowed; Android needs both for the service type. */
+    private fun armStandby() {
+        val granted = listOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION).all {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        }
+        if (granted) runCatching { StreamingService.arm(this) }.onFailure { AppLog.w("Could not arm standby", it) }
     }
 
     /** Phone mapping from display rotation to a fixed activity orientation. */

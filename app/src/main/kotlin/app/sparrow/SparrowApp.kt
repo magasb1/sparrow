@@ -61,6 +61,13 @@ class SparrowApp : Application() {
 
     fun notifyFailure(reason: String) = alert(ALERT_FAILED, "Streaming stopped", reason)
 
+    /** After a reboot or process death: Android only lets the visible app re-enter standby. */
+    fun notifyRearm() = alert(
+        ALERT_REARM,
+        "Sparrow standby is off",
+        "The server cannot start this phone until Sparrow is opened. Tap to open it and re-arm standby.",
+    )
+
     fun canNotify() = Build.VERSION.SDK_INT < 33 ||
         ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
@@ -97,6 +104,7 @@ class SparrowApp : Application() {
         private const val KEY_ONBOARDING = "onboarding_done"
         private const val ALERT_INTERRUPTED = 10
         private const val ALERT_FAILED = 11
+        private const val ALERT_REARM = 12
 
         fun get(context: Context) = context.applicationContext as SparrowApp
     }

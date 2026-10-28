@@ -26,6 +26,7 @@ import app.sparrow.stream.CameraInfo
 import app.sparrow.stream.LinkState
 import app.sparrow.stream.StreamController
 import app.sparrow.stream.StreamStatus
+import app.sparrow.stream.StreamingService
 import com.google.protobuf.Timestamp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -37,10 +38,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -206,6 +207,7 @@ object BackendSession {
             registration = null
             settings.clear()
             app.profiles.removeManaged()
+            StreamingService.disarm(app)
             _state.update { it.copy(message = message) }
             publishRegistration()
         }
@@ -269,15 +271,23 @@ object BackendSession {
         }
     }
 
-    /** Commands arrive with milestone 2; until then the phone says it cannot run them. */
+    /** Runs a backend command and reports the outcome; the server waits up to 10 s for it. */
     private suspend fun answer(client: DeviceClient, command: Command) {
-        AppLog.i("Backend command ${command.kindCase} not supported by this app version")
+        val (ok, text) = try {
+            execute(command)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLog.e("Backend command ${command.kindCase} failed", e)
+            false to (e.message ?: "failed")
+        }
+        AppLog.i("Backend command ${command.kindCase}: ${if (ok) "ok" else "refused"}, $text")
         try {
             client.commandDone(
                 commandDoneRequest {
                     id = command.id
-                    ok = false
-                    message = "Not supported by this app version"
+                    this.ok = ok
+                    message = text
                 },
             )
         } catch (e: CancellationException) {
@@ -286,6 +296,78 @@ object BackendSession {
             AppLog.w("Could not answer backend command", e)
         }
     }
+
+    private suspend fun execute(command: Command): Pair<Boolean, String> {
+        val status = StreamController.status.value
+        return when (command.kindCase) {
+            Command.KindCase.START -> {
+                if (status.running) return true to "Already streaming (${describe(status.link)})"
+                useManagedProfile()?.let { return false to it }
+                when {
+                    StreamingService.remote(StreamingService.ACTION_START) -> Unit
+                    // Not armed, but the app is on screen, so Android lets it start the service.
+                    uiVisible() -> StreamingService.start(app)
+                    else -> return false to "Not in standby. Open Sparrow on the phone to arm it."
+                }
+                awaitStarted()
+            }
+            Command.KindCase.STOP -> {
+                if (!status.running) return false to "Not streaming"
+                if (!StreamingService.remote(StreamingService.ACTION_STOP)) StreamingService.stop(app)
+                val stopped = withTimeoutOrNull(COMMAND_WAIT_MS) { StreamController.status.first { !it.running } } != null
+                stopped to (if (stopped) "Stopped" else "Still stopping")
+            }
+            Command.KindCase.RESTART -> {
+                if (!status.running) return false to "Not streaming"
+                useManagedProfile()?.let { return false to it }
+                if (!StreamingService.remote(StreamingService.ACTION_RESTART)) {
+                    app.startService(Intent(app, StreamingService::class.java).setAction(StreamingService.ACTION_RESTART))
+                }
+                awaitStarted()
+            }
+            Command.KindCase.ZOOM -> {
+                val range = if (status.running) status.zoomRange else cameraZoomRange()
+                val z = command.zoom.ratio.coerceIn(range.start, range.endInclusive)
+                StreamController.setZoom(z)
+                true to "Zoom %.1f×%s".format(z, if (status.running) "" else ", from the next start")
+            }
+            else -> false to "Not supported by this app version"
+        }
+    }
+
+    /** Selects the backend's profile, so a remote start sends what the server configured. Returns why it cannot start. */
+    private fun useManagedProfile(): String? {
+        val managed = app.profiles.profiles.value.firstOrNull { it.managed }
+        managed?.let { app.profiles.select(it.id) }
+        return app.profiles.active.validate().firstOrNull()?.let { "Profile '${app.profiles.active.name}' is invalid: $it" }
+    }
+
+    /** Waits until the stream is past Starting; a failure there is a failed command. */
+    private suspend fun awaitStarted(): Pair<Boolean, String> {
+        val s = withTimeoutOrNull(COMMAND_WAIT_MS) {
+            StreamController.status.first { it.link is LinkState.Failed || it.running && it.link != LinkState.Starting }
+        } ?: return true to "Starting"
+        return (s.link !is LinkState.Failed) to describe(s.link)
+    }
+
+    private fun describe(link: LinkState): String = when (link) {
+        LinkState.Idle -> "idle"
+        LinkState.Starting -> "starting"
+        LinkState.Connecting -> "connecting"
+        LinkState.Listening -> "waiting for a receiver"
+        LinkState.Live -> "live"
+        is LinkState.Reconnecting -> "reconnecting: ${link.reason}"
+        is LinkState.Failed -> "failed: ${link.reason}"
+    }
+
+    private fun cameraZoomRange(): ClosedFloatingPointRange<Double> {
+        val cameras = runCatching { CameraInfo.all(app) }.getOrDefault(emptyList())
+        val camera = cameras.firstOrNull { it.id == app.profiles.active.video.cameraId } ?: cameras.firstOrNull()
+        return camera?.zoomRange ?: 1.0..1.0
+    }
+
+    @Synchronized
+    private fun uiVisible() = "ui" in holders
 
     private suspend fun reportLoop(client: DeviceClient, gen: Long) {
         while (true) {
@@ -304,7 +386,8 @@ object BackendSession {
             val interval = if (status.running) LIVE_REPORT_MS else IDLE_REPORT_MS
             // Report early when the stream starts, stops or changes state.
             withTimeoutOrNull(interval) {
-                StreamController.status.map { streamState(it) }.distinctUntilChanged().drop(1).first()
+                combine(StreamController.status, StreamController.armed) { s, armed -> streamState(s, armed) }
+                    .distinctUntilChanged().drop(1).first()
             }
         }
     }
@@ -387,8 +470,8 @@ object BackendSession {
         }
     }
 
-    private fun streamState(s: StreamStatus): StreamState = when (s.link) {
-        LinkState.Idle -> StreamState.STREAM_STATE_IDLE
+    private fun streamState(s: StreamStatus, armed: Boolean = StreamController.armed.value): StreamState = when (s.link) {
+        LinkState.Idle -> if (armed && !s.running) StreamState.STREAM_STATE_STANDBY else StreamState.STREAM_STATE_IDLE
         LinkState.Starting -> StreamState.STREAM_STATE_STARTING
         LinkState.Connecting -> StreamState.STREAM_STATE_CONNECTING
         LinkState.Listening -> StreamState.STREAM_STATE_LISTENING
@@ -441,4 +524,6 @@ object BackendSession {
     private const val LIVE_REPORT_MS = 5_000L
     private const val IDLE_REPORT_MS = 30_000L
     private const val MANAGED_ID = "backend-managed"
+    /** Below the server's 10 s wait, so the answer arrives in time. */
+    private const val COMMAND_WAIT_MS = 7_000L
 }

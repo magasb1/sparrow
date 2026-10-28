@@ -1,0 +1,28 @@
+{{template "head"}}
+{{template "nav"}}
+<main>
+  <h1>Profiles</h1>
+  <p>A profile assigned to a phone is pushed to it and used from its next start. Editing a profile
+     updates every phone that has it.</p>
+  <p><a href="/profiles/new">New profile</a></p>
+  {{if .Profiles}}
+  <table>
+    <thead><tr><th>Name</th><th>Phones</th><th>Changed</th><th></th></tr></thead>
+    <tbody>
+    {{range .Profiles}}
+    <tr>
+      <td><a href="/profiles/{{.ID}}"><strong>{{.Name}}</strong></a></td>
+      <td>{{.Devices}}</td>
+      <td>{{.UpdatedAt.Local.Format "2006-01-02 15:04"}}</td>
+      <td><form method="post" action="/profiles/{{.ID}}/delete"
+                onsubmit="return confirm('Delete {{.Name}}? Phones that have it go back to their own profiles.')">
+        <button class="danger">Delete</button></form></td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p><small>No profiles yet.</small></p>
+  {{end}}
+</main>
+{{template "foot"}}

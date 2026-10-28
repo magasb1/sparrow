@@ -46,6 +46,9 @@ class ProfileMapperTest {
         assertEquals(FocusMode.CONTINUOUS, p.video.focus)
         assertEquals(KlvCarriage.SYNC, p.metadata.carriage)
         assertEquals(null, p.video.cameraId)
+        // A server-made profile leaves these lists empty; the phone fills in its defaults.
+        assertEquals(MetadataSettings().enabledTags, p.metadata.enabledTags)
+        assertEquals(DetectionSettings().classes, p.detection.classes)
     }
 
     /** Fails when a field is added to the Kotlin model; update the mapper, the proto and this list. */

@@ -168,7 +168,8 @@ object ProfileMapper {
             ),
             metadata = MetadataSettings(
                 rateHz = m.rateHz,
-                enabledTags = m.enabledTagsList.toSet(),
+                // Empty means the phone's defaults: the server does not know the tag list.
+                enabledTags = m.enabledTagsList.toSet().ifEmpty { MetadataSettings().enabledTags },
                 missionId = m.missionId,
                 platformDesignation = m.platformDesignation,
                 imageSourceSensor = m.imageSourceSensor,
@@ -186,7 +187,7 @@ object ProfileMapper {
                     enabled = det.enabled,
                     rateHz = det.rateHz,
                     minConfidence = det.minConfidence,
-                    classes = det.classesList.toSet(),
+                    classes = det.classesList.toSet().ifEmpty { DetectionSettings().classes },
                     sendVmti = det.sendVmti,
                 )
             },

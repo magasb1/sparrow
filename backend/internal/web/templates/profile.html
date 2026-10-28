@@ -1,0 +1,114 @@
+{{template "head"}}
+{{template "nav"}}
+<main class="narrow wide">
+  <p><a href="/profiles">← Profiles</a></p>
+  <h1>{{if .ID}}Edit {{.P.GetName}}{{else}}New profile{{end}}</h1>
+  {{if .Problems}}<div class="card">{{range .Problems}}<p class="error">{{.}}</p>{{end}}</div>{{end}}
+  {{$d := .P.GetDestination}}{{$v := .P.GetVideo}}{{$a := .P.GetAudio}}{{$m := .P.GetMetadata}}{{$det := .P.GetDetection}}{{$adv := .P.GetAdvanced}}
+  <form method="post" action="{{if .ID}}/profiles/{{.ID}}{{else}}/profiles/new{{end}}">
+    <fieldset class="card">
+      <legend>Profile</legend>
+      <label>Name <input name="name" value="{{.P.GetName}}" required maxlength="100"></label>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Destination (SRT)</legend>
+      <div class="grid">
+        <label>Mode <select name="mode">
+          <option value="caller"{{if ne $d.GetMode 2}} selected{{end}}>Caller (phone connects out)</option>
+          <option value="listener"{{if eq $d.GetMode 2}} selected{{end}}>Listener (receiver connects in)</option>
+        </select></label>
+        <label>Host <input name="host" value="{{$d.GetHost}}" placeholder="srt.example.com"></label>
+        <label>Port <input name="port" type="number" min="1" max="65535" value="{{$d.GetPort}}"></label>
+        <label>Latency (ms) <input name="latency_ms" type="number" min="20" max="8000" value="{{$d.GetLatencyMs}}"></label>
+        <label>Stream ID <input name="stream_id" value="{{$d.GetStreamId}}" maxlength="512"></label>
+        <label>AES key length <select name="key_length">
+          {{range $k := list 0 16 24 32}}<option value="{{$k}}"{{if eq $d.GetKeyLength $k}} selected{{end}}>{{if eq $k 0}}Default (16){{else}}{{$k}} bytes{{end}}</option>{{end}}
+        </select></label>
+        <label>Passphrase <input name="passphrase" type="password" autocomplete="new-password" minlength="10" maxlength="79"
+          placeholder="{{if .HasPassphrase}}Set; leave blank to keep{{else}}None (unencrypted){{end}}"></label>
+        {{if .HasPassphrase}}<label class="check"><input type="checkbox" name="clear_passphrase"> Remove passphrase</label>{{end}}
+      </div>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Video</legend>
+      <div class="grid">
+        <label>Codec <select name="codec">
+          <option value="h265"{{if ne $v.GetCodec 1}} selected{{end}}>H.265 (HEVC)</option>
+          <option value="h264"{{if eq $v.GetCodec 1}} selected{{end}}>H.264</option>
+        </select></label>
+        <label>Resolution <select name="resolution">
+          {{range .Resolutions}}<option{{if eq . $.Resolution}} selected{{end}}>{{.}}</option>{{end}}
+        </select></label>
+        <label>Frame rate <input name="fps" type="number" min="1" max="60" value="{{$v.GetFps}}"></label>
+        <label>Bitrate (kbit/s) <input name="bitrate_kbps" type="number" min="100" max="50000" value="{{$v.GetBitrateKbps}}"></label>
+        <label>GOP (s) <input name="gop_seconds" type="number" step="0.1" min="0.1" max="10" value="{{$v.GetGopSeconds}}"></label>
+        <label>Rate control <select name="rate_control">
+          <option value="cbr"{{if ne $v.GetRateControl 1}} selected{{end}}>CBR</option>
+          <option value="vbr"{{if eq $v.GetRateControl 1}} selected{{end}}>VBR</option>
+        </select></label>
+        <label>Zoom <input name="zoom_ratio" type="number" step="0.1" min="0.1" max="100" value="{{$v.GetZoomRatio}}"></label>
+        <label>Focus <select name="focus">
+          <option value="continuous"{{if ne $v.GetFocus 2}} selected{{end}}>Continuous</option>
+          <option value="infinity"{{if eq $v.GetFocus 2}} selected{{end}}>Infinity</option>
+        </select></label>
+        <label>Orientation <select name="orientation">
+          <option value="auto"{{if eq $v.GetOrientation 0}} selected{{end}}>Follow the phone</option>
+          <option value="portrait"{{if eq $v.GetOrientation 1}} selected{{end}}>Portrait</option>
+          <option value="landscape"{{if eq $v.GetOrientation 2}} selected{{end}}>Landscape</option>
+        </select></label>
+        <label class="check"><input type="checkbox" name="stabilization"{{if $v.GetStabilization}} checked{{end}}> Stabilisation</label>
+      </div>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Audio</legend>
+      <div class="grid">
+        <label class="check"><input type="checkbox" name="audio"{{if $a.GetEnabled}} checked{{end}}> Send audio</label>
+        <label>Bitrate (kbit/s) <input name="audio_kbps" type="number" min="16" max="320" value="{{$a.GetBitrateKbps}}"></label>
+      </div>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>KLV metadata (ST 0601)</legend>
+      <div class="grid">
+        <label>Rate (Hz) <input name="meta_rate_hz" type="number" step="0.1" min="1" max="60" value="{{$m.GetRateHz}}"></label>
+        <label>Mission ID <input name="mission_id" value="{{$m.GetMissionId}}" maxlength="127"></label>
+        <label>Platform designation <input name="platform" value="{{$m.GetPlatformDesignation}}" maxlength="127"></label>
+        <label>Image source sensor <input name="sensor" value="{{$m.GetImageSourceSensor}}" maxlength="127"></label>
+        <label>Call sign <input name="call_sign" value="{{$m.GetCallSign}}" maxlength="127"></label>
+        <label>Ground elevation (m) <input name="ground_elevation_m" type="number" step="any" value="{{$m.GetGroundElevationM}}"></label>
+        <label>Heading offset (°) <input name="heading_offset_deg" type="number" step="any" min="-180" max="180" value="{{$m.GetHeadingOffsetDeg}}"></label>
+        <label>Carriage <select name="carriage">
+          <option value="sync"{{if ne $m.GetCarriage 2}} selected{{end}}>Synchronous</option>
+          <option value="async"{{if eq $m.GetCarriage 2}} selected{{end}}>Asynchronous</option>
+        </select></label>
+      </div>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Object detection</legend>
+      <div class="grid">
+        <label class="check"><input type="checkbox" name="detection"{{if $det.GetEnabled}} checked{{end}}> Detect objects</label>
+        <label class="check"><input type="checkbox" name="send_vmti"{{if $det.GetSendVmti}} checked{{end}}> Send tracks as VMTI</label>
+        <label>Rate (Hz) <input name="detection_rate_hz" type="number" step="0.5" min="0.5" max="15" value="{{$det.GetRateHz}}"></label>
+        <label>Min. confidence <input name="min_confidence" type="number" step="0.05" min="0.05" max="0.99" value="{{$det.GetMinConfidence}}"></label>
+      </div>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Advanced</legend>
+      <div class="grid">
+        <label class="check"><input type="checkbox" name="abr"{{if $adv.GetAdaptiveBitrate}} checked{{end}}> Adaptive bitrate</label>
+        <label>ABR minimum (kbit/s) <input name="min_kbps" type="number" min="100" max="50000" value="{{$adv.GetMinBitrateKbps}}"></label>
+        <label>ABR maximum (kbit/s) <input name="max_kbps" type="number" min="100" max="50000" value="{{$adv.GetMaxBitrateKbps}}"></label>
+        <label>PTS delay (ms) <input name="pts_delay_ms" type="number" min="0" max="2000" value="{{$adv.GetPtsDelayMs}}"></label>
+        <label class="check"><input type="checkbox" name="record"{{if $adv.GetRecordLocally}} checked{{end}}> Also record on the phone</label>
+      </div>
+    </fieldset>
+
+    <button>{{if .ID}}Save and push to phones{{else}}Create profile{{end}}</button>
+  </form>
+</main>
+{{template "foot"}}

@@ -18,14 +18,14 @@
   <tbody>
   {{range .Devices}}
   <tr>
-    <td><strong>{{.Alias}}</strong></td>
+    <td><a href="/devices/{{.ID}}"><strong>{{.Alias}}</strong></a></td>
     <td>{{.Name}}<br><small>app {{.AppVersion}}</small></td>
     <td><span class="state state-{{.Status}}">{{.Status}}</span>{{if .Connected}} <small title="Control link open">●</small>{{end}}
       {{if and .Fresh .Latest.Reason}}<br><small>{{.Latest.Reason}}</small>{{end}}</td>
     <td>{{if and .Fresh (eq .Latest.State "live")}}{{kbps .Latest.SendKbps}}{{if .Latest.RttMs}}<br><small>RTT {{printf "%.0f" (deref .Latest.RttMs)}} ms</small>{{end}}{{else}}–{{end}}</td>
     <td>{{if and .Latest .Latest.Lat}}{{printf "%.5f, %.5f" (deref .Latest.Lat) (deref .Latest.Lon)}}{{else}}–{{end}}</td>
     <td>{{if and .Latest .Latest.Battery}}{{derefInt .Latest.Battery}} %{{if .Latest.Charging}} ⚡{{end}}{{else}}–{{end}}</td>
-    <td>{{if eq .ConfigRevision 0}}local{{else if eq .ConfigRevision .AppliedRevision}}applied{{else}}pending{{end}}</td>
+    <td>{{template "config_state" .}}</td>
     <td>{{ago .LastSeenAt}}</td>
     <td><button class="danger" hx-post="/devices/{{.ID}}/remove" hx-target="closest div"
          hx-confirm="Remove {{.Alias}}? The phone must be registered again to come back.">Remove</button></td>

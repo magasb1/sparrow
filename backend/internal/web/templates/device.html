@@ -1,0 +1,57 @@
+{{template "head"}}
+{{template "nav"}}
+<main class="narrow wide">
+  <p><a href="/">← Devices</a></p>
+  <h1>{{.D.Alias}} <small>{{.D.Name}}</small></h1>
+  <div hx-get="/devices/{{.D.ID}}/status" hx-trigger="every 2s" hx-swap="innerHTML">
+    {{template "device_status" .D}}
+  </div>
+
+  <section class="card">
+    <h2>Control</h2>
+    <div class="actions" hx-target="#result" hx-disabled-elt="find button" hx-indicator="#result">
+      <button hx-post="/devices/{{.D.ID}}/command" hx-vals='{"kind":"start"}'>Start</button>
+      <button hx-post="/devices/{{.D.ID}}/command" hx-vals='{"kind":"stop"}' class="secondary">Stop</button>
+      <button hx-post="/devices/{{.D.ID}}/command" hx-vals='{"kind":"restart"}' class="secondary">Restart</button>
+      <form hx-post="/devices/{{.D.ID}}/command" class="inline">
+        <input type="hidden" name="kind" value="zoom">
+        <input name="zoom" type="number" step="0.1" min="{{.D.ZoomMin}}" max="{{.D.ZoomMax}}" aria-label="Zoom ratio"
+               value="{{if .D.Latest}}{{printf "%.1f" .D.Latest.Zoom}}{{else}}1.0{{end}}">
+        <button class="secondary">Zoom</button>
+      </form>
+    </div>
+    <p id="result" aria-live="polite"><small>Start works while the phone is in standby or has the app open.
+      A new profile takes effect at the next start; use Restart while live.</small></p>
+  </section>
+
+  <section class="card">
+    <h2>Profile</h2>
+    <form method="post" action="/devices/{{.D.ID}}/profile" class="inline">
+      <select name="profile_id" aria-label="Profile">
+        <option value="">None: the phone uses its own profiles</option>
+        {{range .Profiles}}<option value="{{.ID}}"{{if eq .ID $.D.ProfileID}} selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+      <button>Assign</button>
+    </form>
+    <small>{{if .D.ProfileID}}<a href="/profiles/{{.D.ProfileID}}">Edit {{.D.ProfileName}}</a> · {{end}}<a href="/profiles/new">New profile</a></small>
+  </section>
+</main>
+{{template "foot"}}
+
+{{define "device_status"}}
+<section class="card status">
+  <div><small>Status</small><span class="state state-{{.Status}}">{{.Status}}</span>{{if .Connected}} <small title="Control link open">● linked</small>{{end}}
+    {{if and .Fresh .Latest.Reason}}<br><small>{{.Latest.Reason}}</small>{{end}}</div>
+  <div><small>Profile</small>{{template "config_state" .}}{{if and .Latest .Latest.Profile}}<br><small>running: {{.Latest.Profile}}</small>{{end}}</div>
+  <div><small>Bitrate</small>{{if and .Fresh (eq .Latest.State "live")}}{{kbps .Latest.SendKbps}}{{if .Latest.RttMs}} · RTT {{printf "%.0f" (deref .Latest.RttMs)}} ms{{end}}{{else}}–{{end}}</div>
+  <div><small>Video</small>{{if and .Latest .Latest.Resolution}}{{.Latest.Resolution}} · zoom {{printf "%.1f" .Latest.Zoom}}×{{else}}–{{end}}</div>
+  <div><small>Position</small>{{if and .Latest .Latest.Lat}}{{printf "%.5f, %.5f" (deref .Latest.Lat) (deref .Latest.Lon)}}{{else}}–{{end}}</div>
+  <div><small>Battery</small>{{if and .Latest .Latest.Battery}}{{derefInt .Latest.Battery}} %{{if .Latest.Charging}} ⚡{{end}}{{else}}–{{end}}</div>
+  <div><small>Last seen</small>{{ago .LastSeenAt}}</div>
+  <div><small>App</small>{{.AppVersion}}</div>
+</section>
+{{end}}
+
+{{define "config_state"}}{{if .ProfileID}}{{.ProfileName}}{{else}}local{{end}}{{if ne .ConfigRevision .AppliedRevision}} <small class="pending">· waiting for phone</small>{{end}}{{end}}
+
+{{define "command_result"}}<span class="{{if .OK}}ok{{else}}error{{end}}">{{.Message}}</span>{{end}}

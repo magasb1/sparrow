@@ -6,8 +6,10 @@ passes each phone's stream on to other systems, with KLV byte-exact on SRT.
 
 The app works exactly as today when no backend is registered.
 
-Status: **milestones 0 and 1 implemented** (see [backend/README.md](../backend/README.md) for
-results and how to run it). Milestones 2–4 are not started. This version deliberately leaves out
+Status: **milestones 0, 1 and 2 implemented** (see [backend/README.md](../backend/README.md) for
+results and how to run it). Milestones 3–4 are not started. Milestone 2 differs from §4.4 in one
+way: profiles live in a library on the server, and each phone is assigned one of them (editing a
+profile re-pushes it to every phone that has it). Standby holds a partial wake lock. This version deliberately leaves out
 PKI, ONVIF and everything else in §9. The design keeps room for them.
 
 ---

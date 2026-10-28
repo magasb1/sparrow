@@ -74,6 +74,7 @@ func New(cfg Config, st *store.Store, h *hub.Hub, log *slog.Logger) *Server {
 			}
 			return *p
 		},
+		"list": func(v ...int) []int { return v },
 		"derefInt": func(p *int) int {
 			if p == nil {
 				return 0
@@ -96,6 +97,16 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /enroll", s.authed(s.enrollPage))
 	mux.HandleFunc("POST /enroll", s.authed(s.enroll))
 	mux.HandleFunc("POST /devices/{id}/remove", s.authed(s.remove))
+	mux.HandleFunc("GET /devices/{id}", s.authed(s.devicePage))
+	mux.HandleFunc("GET /devices/{id}/status", s.authed(s.deviceStatus))
+	mux.HandleFunc("POST /devices/{id}/command", s.authed(s.command))
+	mux.HandleFunc("POST /devices/{id}/profile", s.authed(s.assignProfile))
+	mux.HandleFunc("GET /profiles", s.authed(s.profilesPage))
+	mux.HandleFunc("GET /profiles/new", s.authed(s.newProfilePage))
+	mux.HandleFunc("POST /profiles/new", s.authed(s.createProfile))
+	mux.HandleFunc("GET /profiles/{id}", s.authed(s.editProfilePage))
+	mux.HandleFunc("POST /profiles/{id}", s.authed(s.updateProfile))
+	mux.HandleFunc("POST /profiles/{id}/delete", s.authed(s.deleteProfile))
 }
 
 // --- sessions ---------------------------------------------------------------------------------
@@ -351,7 +362,7 @@ func EnrollLink(server, token, pin string) string {
 
 // --- helpers ----------------------------------------------------------------------------------
 
-func (s *Server) render(w http.ResponseWriter, name string, data map[string]any) {
+func (s *Server) render(w http.ResponseWriter, name string, data any) {
 	var buf bytes.Buffer
 	if err := s.tmpl.ExecuteTemplate(&buf, name, data); err != nil {
 		s.fail(w, "render "+name, err)

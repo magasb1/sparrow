@@ -233,19 +233,22 @@ func (s *Store) Config(ctx context.Context, deviceID string) (revision int64, pr
 type DeviceRow struct {
 	Device
 	ConfigRevision, AppliedRevision int64
-	Latest                          *Report
+	// Assigned library profile; empty when the phone uses its own profiles.
+	ProfileID, ProfileName string
+	Latest                 *Report
 }
 
 // ListDevices returns active devices with their latest report.
 func (s *Store) ListDevices(ctx context.Context) ([]DeviceRow, error) {
 	rows, err := s.pool.Query(ctx, `SELECT d.id, d.alias, d.name, d.publish_key, d.manufacturer, d.model,
 			d.android_sdk, d.app_version, d.zoom_min, d.zoom_max, d.registered_at, d.last_seen_at,
-			c.revision, c.applied_revision,
+			c.revision, c.applied_revision, COALESCE(p.id::text, ''), COALESCE(p.name, ''),
 			r.ts, r.received_at, r.state, r.reason, r.profile_name, r.send_kbps, r.target_kbps, r.rtt_ms,
 			r.loss_percent, r.lat, r.lon, r.alt_msl, r.accuracy_m, r.heading_deg, r.elevation_deg, r.zoom,
 			r.resolution, r.battery, r.charging, r.thermal_status
 		FROM devices d
 		JOIN device_config c ON c.device_id = d.id
+		LEFT JOIN profiles p ON p.id = c.profile_id
 		LEFT JOIN LATERAL (SELECT * FROM reports WHERE device_id = d.id ORDER BY received_at DESC LIMIT 1) r ON true
 		WHERE d.revoked_at IS NULL
 		ORDER BY d.alias`)
@@ -265,7 +268,7 @@ func (s *Store) ListDevices(ctx context.Context) ([]DeviceRow, error) {
 		d := &row.Device
 		if err := rows.Scan(&d.ID, &d.Alias, &d.Name, &d.PublishKey, &d.Manufacturer, &d.Model, &d.AndroidSDK,
 			&d.AppVersion, &d.ZoomMin, &d.ZoomMax, &d.RegisteredAt, &d.LastSeenAt,
-			&row.ConfigRevision, &row.AppliedRevision,
+			&row.ConfigRevision, &row.AppliedRevision, &row.ProfileID, &row.ProfileName,
 			&ts, &received, &state, &reason, &profile, &sendKbps, &targetKbps, &r.RttMs, &r.LossPercent,
 			&r.Lat, &r.Lon, &r.AltMsl, &r.AccuracyM, &r.HeadingDeg, &r.ElevationDeg, &zoom, &resolution,
 			&r.Battery, &charging, &thermal); err != nil {

@@ -30,7 +30,8 @@ services:
 
   sparrowd:
     build:
-      context: ../backend
+      # Relative to the repository root: Coolify runs compose with --project-directory set to it.
+      context: backend
       dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:

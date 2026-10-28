@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -52,6 +53,8 @@ func run(log *slog.Logger) error {
 	}
 	defer st.Close()
 
+	// Plain HTTP behind a TLS-terminating proxy (e.g. Traefik): browsers and phones still see HTTPS.
+	behindTLS := cfg.InsecureHTTP && strings.HasPrefix(cfg.PublicURL, "https://")
 	var cert tls.Certificate
 	pin := ""
 	if !cfg.InsecureHTTP {
@@ -66,7 +69,7 @@ func run(log *slog.Logger) error {
 		if pin, err = tlsutil.Pin(cert); err != nil {
 			return err
 		}
-	} else {
+	} else if !behindTLS {
 		log.Warn("serving plain HTTP: device tokens cross the network unencrypted; use only in a lab")
 	}
 
@@ -78,7 +81,7 @@ func run(log *slog.Logger) error {
 		AdminPassword: cfg.AdminPassword,
 		PublicURL:     cfg.PublicURL,
 		Pin:           pin,
-		SecureCookies: !cfg.InsecureHTTP,
+		SecureCookies: !cfg.InsecureHTTP || behindTLS,
 		EnrollmentTTL: cfg.EnrollmentTTL,
 	}, st, h, log).Routes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })

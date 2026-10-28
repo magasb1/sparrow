@@ -1,6 +1,8 @@
 package app.sparrow.ui
 
+import android.Manifest
 import android.content.ClipboardManager
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.security.NetworkSecurityPolicy
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -43,6 +45,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.sparrow.protocol.EnrollLink
 import app.sparrow.remote.BackendSession
@@ -106,6 +109,12 @@ private fun Unregistered(
     val qrPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
         uri?.let { decodeQrImage(context, it) }?.let { text = it }
     }
+    var scanning by rememberSaveable { mutableStateOf(false) }
+    var scanError by remember { mutableStateOf<String?>(null) }
+    val cameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        scanning = granted
+        scanError = if (granted) null else "Allow camera access to scan, or paste the link."
+    }
     Text(
         "Connect this phone to a Sparrow server. The server then sees the phone's status, stream statistics, " +
             "position and battery, and can send it a profile. Nothing is sent anywhere until you register.",
@@ -120,14 +129,29 @@ private fun Unregistered(
         modifier = Modifier.fillMaxWidth(),
         minLines = 2,
     )
+    if (scanning) {
+        QrScanner(
+            onResult = { text = it.trim(); scanning = false },
+            onError = { scanError = it; scanning = false },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedButton(onClick = { scanning = false }, modifier = Modifier.fillMaxWidth()) { Text("Cancel scan") }
+    }
+    scanError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = {
+            scanError = null
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                scanning = true
+            } else cameraPermission.launch(Manifest.permission.CAMERA)
+        }, enabled = !scanning) { Text("Scan QR") }
         OutlinedButton(onClick = {
             val clip = context.getSystemService(ClipboardManager::class.java).primaryClip
             clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()?.let { text = it.trim() }
         }) { Text("Paste") }
         OutlinedButton(onClick = {
             qrPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-        }) { Text("QR from image") }
+        }) { Text("From image") }
     }
     parsed.getOrNull()?.let { link ->
         Text("Server: ${link.serverUrl}", fontWeight = FontWeight.SemiBold)

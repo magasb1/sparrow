@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"image/png"
 	"io/fs"
 	"log/slog"
 	"math"
@@ -300,18 +299,31 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, "make QR code", err)
 		return
 	}
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, code.Image()); err != nil {
-		s.fail(w, "make QR code", err)
-		return
-	}
 	s.render(w, "enroll.html", map[string]any{
 		"TTL":     hours(s.cfg.EnrollmentTTL),
 		"Link":    link,
-		"QR":      template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())),
+		"QR":      qrSVG(code),
 		"Expires": expires,
 		"Server":  s.baseURL(r),
 	})
+}
+
+// qrSVG draws the code as an SVG with a 4-module quiet zone. Vector, so it stays sharp at any
+// size; a scaled-down PNG of a long link loses modules and will not scan.
+func qrSVG(c *qr.Code) template.HTML {
+	var b bytes.Buffer
+	n := c.Size + 8
+	fmt.Fprintf(&b, `<svg class="qr" viewBox="-4 -4 %d %d" role="img" aria-label="Enrollment QR code" shape-rendering="crispEdges">`+
+		`<rect x="-4" y="-4" width="%d" height="%d" fill="#fff"/><path fill="#000" d="`, n, n, n, n)
+	for y := 0; y < c.Size; y++ {
+		for x := 0; x < c.Size; x++ {
+			if c.Black(x, y) {
+				fmt.Fprintf(&b, "M%d %dh1v1h-1z", x, y)
+			}
+		}
+	}
+	b.WriteString(`"/></svg>`)
+	return template.HTML(b.String()) //nolint:gosec // only numbers from the QR bitmap
 }
 
 func (s *Server) baseURL(r *http.Request) string {

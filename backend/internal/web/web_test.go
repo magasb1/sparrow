@@ -122,7 +122,7 @@ func TestEnrollRegisterAndRemove(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	m := linkRe.FindString(string(body))
-	if m == "" || !strings.Contains(string(body), "data:image/png;base64,") {
+	if m == "" || !strings.Contains(string(body), `<svg class="qr"`) {
 		t.Fatalf("no link or QR in page:\n%s", body)
 	}
 	link, err := url.Parse(strings.ReplaceAll(m, "&amp;", "&"))

@@ -6,7 +6,7 @@
   <div class="card">
     <p>In Sparrow, open <strong>Menu → Backend</strong> and scan this code or paste the link.
        It works once and expires {{.Expires.Local.Format "2006-01-02 15:04"}}.</p>
-    <img class="qr" src="{{.QR}}" alt="Enrollment QR code" width="264" height="264">
+    {{.QR}}
     <textarea readonly rows="4" onclick="this.select()">{{.Link}}</textarea>
     <p><small>Server: {{.Server}}</small></p>
   </div>

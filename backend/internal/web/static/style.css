@@ -25,7 +25,7 @@ th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--lin
 th { font-size: 13px; color: var(--muted); font-weight: 600; }
 small { color: var(--muted); }
 .error { color: var(--live); margin: 0; }
-.qr { image-rendering: pixelated; background: #fff; padding: 8px; border-radius: 6px; justify-self: center; }
+.qr { display: block; width: min(100%, 420px); height: auto; aspect-ratio: 1; border-radius: 6px; justify-self: center; }
 .state { font-weight: 600; text-transform: capitalize; }
 .state-live { color: var(--live); }
 .state-standby, .state-idle, .state-connected { color: var(--ok); }
